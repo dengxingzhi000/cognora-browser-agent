@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>反自动化检测演示</title>
+    <style>
+      body {
+        display: grid;
+        min-height: 100vh;
+        margin: 0;
+        place-items: center;
+        background: #f4f6fa;
+        color: #1f2430;
+        font-family: "Microsoft YaHei", system-ui, sans-serif;
+      }
+      .captcha {
+        width: 360px;
+        padding: 28px;
+        border: 1px solid #d9dee8;
+        border-radius: 12px;
+        background: #fff;
+        text-align: center;
+      }
+      .grid {
+        height: 120px;
+        margin-top: 16px;
+        border-radius: 8px;
+        background: repeating-linear-gradient(45deg, #e8ecf5 0 12px, #dfe5f1 12px 24px);
+      }
+    </style>
+  </head>
+  <body>
+    <!-- data-captcha 是执行层识别的结构性标记；spike 只检测并退出，不尝试绕过。 -->
+    <div class="captcha" data-captcha="demo">
+      <h1>请完成安全验证</h1>
+      <p>检测到异常访问，请完成下方人机验证后继续。</p>
+      <div class="grid"></div>
+    </div>
+  </body>
+</html>

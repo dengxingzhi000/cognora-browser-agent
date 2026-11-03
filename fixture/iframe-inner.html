@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>结算表单 · iframe 内页</title>
+    <style>
+      body { font-family: "Microsoft YaHei", system-ui, sans-serif; padding: 20px; color: #1f2430; }
+      h2 { margin: 0 0 14px; font-size: 16px; }
+      label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+      input { width: 100%; box-sizing: border-box; padding: 9px 11px; border: 1px solid #d9dee8; border-radius: 8px; font: inherit; font-size: 14px; }
+      button { margin-top: 14px; padding: 9px 18px; border: 0; border-radius: 8px; background: #3b5bdb; color: #fff; font: inherit; font-size: 14px; cursor: pointer; }
+      [role="status"] { margin-top: 14px; padding: 9px 11px; border-radius: 8px; font-size: 13px; font-weight: 600; color: #1f7a4d; background: #e7f5ee; }
+      [role="status"][hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <h2>结算表单（iframe 内）</h2>
+    <label for="receiver">收货人</label>
+    <input id="receiver" name="receiver" type="text" autocomplete="off" />
+    <button type="button" id="save-receiver">保存收货人</button>
+    <div id="status" role="status" aria-live="polite" hidden></div>
+    <script>
+      document.getElementById('save-receiver').addEventListener('click', () => {
+        const value = document.getElementById('receiver').value;
+        const status = document.getElementById('status');
+        status.hidden = false;
+        status.textContent = '收货人已保存：' + value;
+      });
+    </script>
+  </body>
+</html>

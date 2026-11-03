@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>会话探测 · Spike 本地靶场</title>
+    <style>
+      body { font-family: "Microsoft YaHei", system-ui, sans-serif; padding: 40px; color: #1f2430; background: #f4f6fa; }
+      main { max-width: 560px; margin: 0 auto; background: #fff; border: 1px solid #d9dee8; border-radius: 12px; padding: 24px; }
+      h1 { margin: 0 0 12px; font-size: 18px; }
+      p { font-size: 14px; line-height: 1.7; }
+      code { background: #f1f4f9; padding: 2px 6px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>会话探测</h1>
+      <p id="cookie-line">cookie值：读取中…</p>
+      <p>用途：验证不同任务的 BrowserContext 是否隔离，以及 storageState 是否按租户归档。</p>
+      <p><code>tenant_cookie</code> 是本页唯一读取的 cookie。</p>
+    </main>
+    <script>
+      function readCookie(name) {
+        const prefix = name + '=';
+        const found = document.cookie.split('; ').find((item) => item.startsWith(prefix));
+        return found ? decodeURIComponent(found.slice(prefix.length)) : '';
+      }
+
+      const value = readCookie('tenant_cookie');
+      document.getElementById('cookie-line').textContent = value
+        ? 'cookie值：' + value
+        : 'cookie值：无';
+    </script>
+  </body>
+</html>

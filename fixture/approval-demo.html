@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>审批恢复演示 · Spike 本地靶场</title>
+    <style>
+      body { font-family: "Microsoft YaHei", system-ui, sans-serif; padding: 40px; color: #1f2430; background: #f4f6fa; }
+      main { max-width: 620px; margin: 0 auto; background: #fff; border: 1px solid #d9dee8; border-radius: 12px; padding: 24px; }
+      h1 { margin: 0 0 12px; font-size: 18px; }
+      .actions { display: flex; gap: 12px; margin-top: 20px; }
+      button { padding: 10px 18px; border-radius: 8px; border: 1px solid #d9dee8; background: #fff; font: inherit; cursor: pointer; }
+      #submit { background: #3b5bdb; border-color: #3b5bdb; color: #fff; }
+      [role="status"] { margin-top: 16px; padding: 10px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; }
+      [role="status"][data-kind="success"] { color: #1f7a4d; background: #e7f5ee; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>审批恢复演示</h1>
+      <p>「保存草稿」调用一次 <code>POST /api/counter</code>；「提交审核」是敏感动作，不会计入计数。</p>
+      <p>用于证明 /approve 后只执行断点步骤，不重跑整条流程。</p>
+      <div class="actions">
+        <button type="button" id="save">保存草稿</button>
+        <button type="button" id="submit">提交审核</button>
+      </div>
+      <div id="status" role="status" aria-live="polite" hidden></div>
+    </main>
+    <script>
+      const status = document.getElementById('status');
+
+      function setStatus(text) {
+        status.hidden = false;
+        status.dataset.kind = 'success';
+        status.textContent = text;
+      }
+
+      document.getElementById('save').addEventListener('click', async () => {
+        const response = await fetch('/api/counter', { method: 'POST' });
+        if (!response.ok) {
+          setStatus('保存失败');
+          return;
+        }
+        setStatus('已保存草稿');
+      });
+
+      document.getElementById('submit').addEventListener('click', () => {
+        setStatus('已提交审核');
+      });
+    </script>
+  </body>
+</html>
