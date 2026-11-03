@@ -12,7 +12,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-7.0.2-3178C6?logo=typescript&logoColor=white&style=flat-square)](https://www.typescriptlang.org/)
 [![Playwright](https://img.shields.io/badge/Playwright-Chromium-2EAD33?logo=playwright&logoColor=white&style=flat-square)](https://playwright.dev/)
 [![Persistence](https://img.shields.io/badge/persistence-postgres%20%7C%20file%20%7C%20memory-4169E1?style=flat-square)](./scripts/db/schema.sql)
-[![Version](https://img.shields.io/badge/version-0.2.2-blue?style=flat-square)](https://github.com/dengxingzhi000/cognora-browser-agent/releases/tag/v0.2.2)
+[![Version](https://img.shields.io/badge/version-0.2.3-blue?style=flat-square)](https://github.com/dengxingzhi000/cognora-browser-agent/releases/tag/v0.2.3)
 
 [快速开始](#快速开始) · [能力概览](#能力概览) · [技术栈](#技术栈) · [架构](#架构) · [覆盖范围](#覆盖范围) · [API](#api-契约) · [持久化](#持久化) · [安全](#安全边界) · [测试](#测试与-ci) · [限制](#已知限制)
 
@@ -589,11 +589,12 @@ Postgres / 文件加载。
 ## 文档
 
 - [CHANGELOG.md](./CHANGELOG.md) — 版本变更与已知限制
-- [docs/release-0.2.2.md](./docs/release-0.2.2.md) — 当前版本的部署、接口、已验证能力与边界
+- [docs/release-0.2.3.md](./docs/release-0.2.3.md) — 当前版本的部署、已验证能力与边界
+- [docs/release-0.2.2.md](./docs/release-0.2.2.md) — 上一版本（依赖升级）
 - [.env.example](./.env.example) — 所有环境变量与默认值
 - [scripts/db/schema.sql](./scripts/db/schema.sql) — 四张 `browser_*` 表
 - [.github/workflows/ci.yml](./.github/workflows/ci.yml) — CI 流程
-- [v0.2.2 Release](https://github.com/dengxingzhi000/cognora-browser-agent/releases/tag/v0.2.2)
+- [v0.2.3 Release](https://github.com/dengxingzhi000/cognora-browser-agent/releases/tag/v0.2.3)
 
 ## 贡献
 

@@ -1,6 +1,6 @@
 {
   "name": "browser-agent-spike",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "description": "可复用的浏览器执行服务：任务 API、状态机、审批断点与结构化动作执行层",
