@@ -14,7 +14,7 @@
 贴真实命令与真实结果，不要只写「测试通过」。
 例如：
   npm run typecheck
-  npm test        # 离线：32 tests / 30 passed / 2 skipped / 0 failed
+  npm test        # 离线：33 tests / 31 passed / 2 skipped / 0 failed
 -->
 
 ```text

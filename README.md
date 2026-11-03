@@ -29,7 +29,7 @@
 ---
 
 名称里的 `spike` 是历史遗留。这个仓库最初是一次性的 Playwright 验证脚本，现在已经拆成
-API、worker、执行层、安全策略、持久化与观测分层，并由 32 条测试覆盖。执行器不接受模型生成的
+API、worker、执行层、安全策略、持久化与观测分层，并由 33 条测试覆盖。执行器不接受模型生成的
 脚本，只接受 `goto / fill / select / selectCustom / click / upload / download / waitForResponse /
 waitForHidden / screenshot` 这类结构化动作；定位只使用 role、label、text 等语义方式。
 
@@ -53,7 +53,7 @@ npm ci
 ### 2. 本地验证
 
 ```powershell
-npm test          # 离线：32 tests / 30 passed / 2 skipped / 0 failed
+npm test          # 离线：33 tests / 31 passed / 2 skipped / 0 failed
 npm run typecheck # tsc --noEmit，0 错误
 ```
 
@@ -450,14 +450,14 @@ npm run typecheck
 本轮离线实测：
 
 ```text
-tests 32
-pass 30
+tests 33
+pass 31
 fail 0
 skipped 2   # Postgres 完整链路 / 集成检查（未设置 BROWSER_AGENT_PG_DSN）
 ```
 
 `npm run typecheck`（`tsc --noEmit`）0 错误。CI 每次启动一次性 Postgres 17 service 并先执行
-`npm run db:init`，两条 Postgres 用例在 CI 中真实执行（32 passed / 0 skipped）；本地无 DSN 时
+`npm run db:init`，两条 Postgres 用例在 CI 中真实执行（33 passed / 0 skipped）；本地无 DSN 时
 仍按 skip 报告。
 
 | 文件 | 数量 | 覆盖 |
@@ -467,6 +467,7 @@ skipped 2   # Postgres 完整链路 / 集成检查（未设置 BROWSER_AGENT_PG_
 | `tests/security.test.ts` | 7 | 域名、脚本注入、frame 注入、计划校验、文件路径、API 403 |
 | `tests/isolation.test.ts` | 1 | 两种租户并发隔离 + storageState 复用 + 用户隔离 |
 | `tests/reuse-stability.test.ts` | 2 | 连续 10 任务复用 storageState；4 租户并发互不污染 |
+| `tests/fixture-delay.test.ts` | 1 | `/api/slow` 超长 `ms` 被限制在 5000ms |
 | `tests/approval.test.ts` | 1 | 真实浏览器断点续跑、截图、409 |
 | `tests/custom-select.test.ts` | 1 | Radix + AntD 两种 DOM |
 | `tests/iframe.test.ts` | 1 | frameLocator 定位/点击/状态断言 |
