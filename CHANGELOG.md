@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.1 — 2026-11-03
+
+发布物对齐：仓库转为公开，README 按参考项目结构重写，tag/Release 指向 CI 全绿提交。
+
+### Changed
+
+- README 按「快速开始 → 能力概览 → 技术栈 → 架构 → 覆盖范围 → 组件/目录 → API →
+  持久化 → 安全 → 测试与 CI → 真实验证 → 运维 → 已知限制 → FAQ → 文档 → 贡献」
+  重排；只保留本仓库真实存在的命令、数字与限制。
+- 明确记录本轮离线实测：`30 tests / 28 passed / 2 skipped / 0 failed`，`typecheck` 0 错误。
+- 明确边界：未做长稳、并发压测与多实例验证，不声称「全流程稳定」或「生产可用」。
+
+### Fixed
+
+- `tests/security.test.ts` 的上传路径穿越断言改用 `path.resolve` / `path.join`，
+  修复 Linux CI 下把 Windows 反斜杠路径当作合法路径的问题。
+
+### Known limitations
+
+- 进程重启后 `PENDING / RUNNING / WAITING_APPROVAL` 标记 `FAILED(WORKER_RESTARTED)`，不自动续跑。
+- 等待审批不回收浏览器会话；API 无鉴权，默认只监听 `127.0.0.1`。
+- 仅 Chromium；iframe 仅支持 name/title；写穿持久化最终一致。
+
 ## 0.2.0 — 2026-11-03
 
 首个可复用浏览器执行服务交付。
