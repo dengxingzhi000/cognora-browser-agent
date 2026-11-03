@@ -1,0 +1,28 @@
+{
+  "name": "browser-agent-spike",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "可复用的浏览器执行服务：任务 API、状态机、审批断点与结构化动作执行层",
+  "scripts": {
+    "serve": "tsx apps/api/main.ts",
+    "db:init": "tsx scripts/db/init.ts",
+    "test": "node --import tsx --test --test-concurrency=1 \"tests/**/*.test.ts\"",
+    "spike": "tsx src/index.ts",
+    "spike:blocker": "tsx src/index.ts --scenario=blocker",
+    "spike:real-product": "tsx src/index.ts --scenario=real-product",
+    "selftest": "tsx src/selftest.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
+    "playwright": "^1.56.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "fastify": "^5.12.8",
+    "pg": "^8.23.1"
+  }
+}
