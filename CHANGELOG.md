@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.2.2 — 2026-11-03
+
+依赖升级与兼容性说明。
+
+### Changed
+
+- `typescript` 5.9.3 → 7.0.2（devDependency）。TypeScript 7 的 `tsc --noEmit` 在本仓库通过；
+  `tsx` 仍负责测试运行，ESM 结构未变。
+- `@types/node` 范围 `^24.0.0` → `^24.19.2`，锁定在 Node 24.x。registry 最新为 26.6.6，
+  但运行时是 Node 24.22.0，26.x 类型可能暴露 Node 24 不存在的 API，因此按住不升。
+- 运行时依赖 `fastify@5.12.8`、`pg@8.23.1` 已是 registry 最新，未变更。
+- `playwright@1.64.1` 已是 registry 最新；继续使用已安装的 Chromium 1248，未触发浏览器重新下载。
+- `@types/pg@8.23.1`、`tsx@4.23.15` 已是最新，未变更。
+
+### Verified
+
+- `npm run typecheck`：0 错误。
+- `npm test`（无 DSN）：30 tests / 28 passed / 2 skipped / 0 failed。
+- `npm run selftest`：20/20 通过。
+- 本机未设置 `BROWSER_AGENT_PG_DSN` 且无 `.env`，Postgres 用例 skip；未伪造数据库结果。
+
+### Known limitations
+
+- 0.2.1 的运行边界不变：进程重启标记 `WORKER_RESTARTED` 不续跑、API 无鉴权、仅 Chromium、
+  等待审批不回收会话、未做长稳与多实例验证。
+
 ## 0.2.1 — 2026-11-03
 
 发布物对齐：仓库转为公开，README 按参考项目结构重写，tag/Release 指向 CI 全绿提交。
