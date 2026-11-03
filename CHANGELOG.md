@@ -1,11 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.2.3 — 2026-11-03
+
+短时连续/并发稳定性验证，以及 CI 中 Postgres 用例真实执行。
 
 ### Added
 
-- 新增 `tests/reuse-stability.test.ts`：连续 10 个同 key 任务复用同一 storageState（10 COMPLETED /
-  30 steps / 1 ref），以及 4 个租户并发执行互不污染（4 COMPLETED / 12 steps / 4 refs）。
+- 新增 `tests/reuse-stability.test.ts`：连续 10 个同 key 任务复用同一 storageState
+  （**10 COMPLETED / 30 steps / 1 ref**，7.79s）；4 个租户并发执行互不污染
+  （**4 COMPLETED / 12 steps / 4 refs**，2.88s），域名策略违规 0。
 - 该验证只覆盖短时连续/并发，不替代长时间稳定性与多实例验证。
 
 ### Changed
@@ -15,8 +18,14 @@
 
 ### Verified
 
-- `npm test`（无 DSN）：32 tests / 30 passed / 2 skipped / 0 failed。
-- `npm run typecheck`：0 错误。
+- `npm test`（CI，真实 Postgres）：**32 tests / 32 passed / 0 skipped / 0 failed**。
+- `npm test`（本地无 DSN）：32 tests / 30 passed / 2 skipped / 0 failed。
+- `npm run typecheck`：0 错误；`npm run selftest`：20/20 通过。
+
+### Known limitations
+
+- 仅证明短时连续/并发；小时级长跑、内存增长、多实例归属、同 key 并发写回竞态未验证。
+- VM 库 `db_browser_agent` 的本地复跑因凭据策略未执行；CI 用的是一次性 service，不是 VM 库。
 
 ## 0.2.2 — 2026-11-03
 
