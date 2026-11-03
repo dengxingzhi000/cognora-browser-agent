@@ -15,9 +15,28 @@ concurrency:
 
 jobs:
   test:
-    name: typecheck / test (node 24)
+    name: typecheck / test with Postgres (node 24)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+
+    # 仅用于 CI 的一次性 Postgres：trust 认证、无密码，端口只在 runner 内可达。
+    # 不连接任何共享数据库，也不把凭据写进仓库。
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: db_browser_agent
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d db_browser_agent"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      BROWSER_AGENT_PG_DSN: postgresql://postgres@127.0.0.1:5432/db_browser_agent
 
     steps:
       - uses: actions/checkout@v4
@@ -33,9 +52,11 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Init database
+        run: npm run db:init
+
       - name: Typecheck
         run: npm run typecheck
 
-      # 无 BROWSER_AGENT_PG_DSN 时，Postgres 用例按 skip 报告；不连共享数据库。
       - name: Tests
         run: npm test
