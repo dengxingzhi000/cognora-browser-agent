@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题
+    url: https://github.com/dengxingzhi000/cognora-browser-agent/security/advisories/new
+    about: 请勿在公开 issue 中粘贴凭据或 cookie，使用私密漏洞报告。

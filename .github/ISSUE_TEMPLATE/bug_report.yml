@@ -1,0 +1,63 @@
+name: Bug report
+description: 服务行为与文档不一致或发生错误
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请勿在公开 issue 中粘贴 DSN、密码、token 或 cookie。
+        安全问题请走 Security → Report a vulnerability。
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么
+      description: 实际现象与期望行为。
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境
+      description: 版本 / commit、操作系统、Node 版本、是否配置 Postgres。
+      placeholder: |
+        Version: 0.2.0
+        OS: Windows 11
+        Node: 24
+        Storage driver: file
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影响范围
+      options:
+        - API / 状态机
+        - 审批断点恢复
+        - 浏览器会话 / storageState 隔离
+        - 域名 / 动作安全策略
+        - Postgres 持久化或文件回落
+        - 真实商品页 / 靶场流程
+        - 文档不准确
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 相关日志（已脱敏）
+      render: shell
