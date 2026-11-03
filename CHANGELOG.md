@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- 新增 `tests/reuse-stability.test.ts`：连续 10 个同 key 任务复用同一 storageState（10 COMPLETED /
+  30 steps / 1 ref），以及 4 个租户并发执行互不污染（4 COMPLETED / 12 steps / 4 refs）。
+- 该验证只覆盖短时连续/并发，不替代长时间稳定性与多实例验证。
+
+### Verified
+
+- `npm test`（无 DSN）：32 tests / 30 passed / 2 skipped / 0 failed。
+- `npm run typecheck`：0 错误。
+
 ## 0.2.2 — 2026-11-03
 
 依赖升级与兼容性说明。
