@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- 新增 `tests/fixture-delay.test.ts`：锁定 fixture `/api/slow` 对超长 `ms` 的 5000ms 上限，
+  对应当前 CodeQL `js/resource-exhaustion` 告警的误报判定（本地靶场、输入已夹紧，未 dismiss）。
+
 ## 0.2.3 — 2026-11-03
 
 短时连续/并发稳定性验证，以及 CI 中 Postgres 用例真实执行。
