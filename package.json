@@ -1,6 +1,6 @@
 {
   "name": "browser-agent-spike",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "private": true,
   "type": "module",
   "description": "可复用的浏览器执行服务：任务 API、状态机、审批断点与结构化动作执行层",
@@ -15,11 +15,11 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
+    "@types/node": "^24.19.2",
     "@types/pg": "^8.23.1",
     "playwright": "^1.56.0",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "fastify": "^5.12.8",
