@@ -1,0 +1,25 @@
+[
+  {
+    "action": "goto",
+    "url": "http://localhost:4310/product-form",
+    "expect": { "type": "text", "text": "登录态：access_token 已携带" }
+  },
+  {
+    "action": "fill",
+    "target": { "role": "textbox", "name": "商品名称" },
+    "value": "示例动作序列商品"
+  },
+  {
+    "action": "select",
+    "target": { "role": "combobox", "name": "品牌" },
+    "value": "samsung"
+  },
+  {
+    "action": "click",
+    "target": { "role": "button", "name": "保存草稿" },
+    "expect": [
+      { "type": "status", "text": "草稿已保存" },
+      { "type": "list", "container": { "role": "table", "name": "最近草稿" }, "contains": "示例动作序列商品" }
+    ]
+  }
+]
