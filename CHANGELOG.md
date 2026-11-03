@@ -8,6 +8,11 @@
   30 steps / 1 ref），以及 4 个租户并发执行互不污染（4 COMPLETED / 12 steps / 4 refs）。
 - 该验证只覆盖短时连续/并发，不替代长时间稳定性与多实例验证。
 
+### Changed
+
+- CI 增加一次性 Postgres 17 service（`trust`、无密码、仅 runner 内可达），先 `npm run db:init`
+  再跑 `npm test`；两条 Postgres 用例从 skip 变为每次真实执行。
+
 ### Verified
 
 - `npm test`（无 DSN）：32 tests / 30 passed / 2 skipped / 0 failed。

@@ -456,8 +456,9 @@ fail 0
 skipped 2   # Postgres 完整链路 / 集成检查（未设置 BROWSER_AGENT_PG_DSN）
 ```
 
-`npm run typecheck`（`tsc --noEmit`）0 错误。带 DSN 时两条 Postgres 用例会执行；历史实测
-30 passed / 0 skipped（新增稳定性用例尚未在该模式下复跑）。
+`npm run typecheck`（`tsc --noEmit`）0 错误。CI 每次启动一次性 Postgres 17 service 并先执行
+`npm run db:init`，两条 Postgres 用例在 CI 中真实执行（32 passed / 0 skipped）；本地无 DSN 时
+仍按 skip 报告。
 
 | 文件 | 数量 | 覆盖 |
 |---|---|---|
@@ -478,7 +479,8 @@ GitHub Actions（`.github/workflows/ci.yml`）：
 
 - Node 24、`npm ci`、`npx playwright install --with-deps chromium`、`npm run typecheck`、`npm test`；
 - `permissions: contents: read`，`concurrency: ci-${{ github.ref }}`；
-- 无 DSN 时 Postgres 用例按 skip 报告，不连接共享数据库；
+- Postgres 17 service 仅存在于 runner，`trust` 认证、无密码，先 `npm run db:init` 建四张表；
+  `BROWSER_AGENT_PG_DSN` 指向 `127.0.0.1/db_browser_agent`，不连接共享数据库，不写凭据进仓库；
 - 当前 master 的 CI 状态见顶部 Build badge。
 
 ### 连续 / 并发稳定性（一次性验证）
