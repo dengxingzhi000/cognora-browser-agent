@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import test from 'node:test';
 
 import { ActionNotAllowedError, DomainNotAllowedError } from '../src/core/errors.js';
@@ -81,10 +82,10 @@ test('文件路径策略：下载名禁止穿越、上传必须位于配置根�
   assert.throws(() => assertSafeDownloadName('../evil.csv'), ActionNotAllowedError);
   assert.throws(() => assertSafeDownloadName('sub/report.csv'), ActionNotAllowedError);
 
-  const root = 'C:\\tmp\\upload-root';
+  const root = path.resolve('upload-root');
   assert.match(assertUploadPathWithin(root, 'a.txt'), /a\.txt$/);
   assert.throws(
-    () => assertUploadPathWithin(root, '..\\..\\Windows\\win.ini'),
+    () => assertUploadPathWithin(root, path.join('..', '..', 'Windows', 'win.ini')),
     ActionNotAllowedError
   );
 });
