@@ -22,13 +22,14 @@
 
 > [!IMPORTANT]
 > 这是一个已验证核心链路的服务骨架，**不是生产可用系统**。任务 API 没有鉴权，默认只监听
-> `127.0.0.1:4320`；进程重启不会自动续跑；没有做长时间稳定性或多实例验证。部署前必须放在
+> `127.0.0.1:4320`；进程重启不会自动续跑；长时间稳定性与多实例尚未验证（仅做过 10 轮连续
+> + 4 租户并发的一次性验证）。部署前必须放在
 > 受控网络或网关之后，并补齐鉴权、审批超时、会话回收与多实例归属。
 
 ---
 
 名称里的 `spike` 是历史遗留。这个仓库最初是一次性的 Playwright 验证脚本，现在已经拆成
-API、worker、执行层、安全策略、持久化与观测分层，并由 30 条测试覆盖。执行器不接受模型生成的
+API、worker、执行层、安全策略、持久化与观测分层，并由 32 条测试覆盖。执行器不接受模型生成的
 脚本，只接受 `goto / fill / select / selectCustom / click / upload / download / waitForResponse /
 waitForHidden / screenshot` 这类结构化动作；定位只使用 role、label、text 等语义方式。
 
@@ -52,7 +53,7 @@ npm ci
 ### 2. 本地验证
 
 ```powershell
-npm test          # 离线：30 tests / 28 passed / 2 skipped / 0 failed
+npm test          # 离线：32 tests / 30 passed / 2 skipped / 0 failed
 npm run typecheck # tsc --noEmit，0 错误
 ```
 
@@ -449,14 +450,14 @@ npm run typecheck
 本轮离线实测：
 
 ```text
-tests 30
-pass 28
+tests 32
+pass 30
 fail 0
 skipped 2   # Postgres 完整链路 / 集成检查（未设置 BROWSER_AGENT_PG_DSN）
 ```
 
-`npm run typecheck`（`tsc --noEmit`）0 错误。带 DSN 时两条 Postgres 用例会执行，此前实测
-30 passed / 0 skipped。
+`npm run typecheck`（`tsc --noEmit`）0 错误。带 DSN 时两条 Postgres 用例会执行；历史实测
+30 passed / 0 skipped（新增稳定性用例尚未在该模式下复跑）。
 
 | 文件 | 数量 | 覆盖 |
 |---|---|---|
@@ -464,6 +465,7 @@ skipped 2   # Postgres 完整链路 / 集成检查（未设置 BROWSER_AGENT_PG_
 | `tests/api.test.ts` | 8 | 创建/查询/steps、审批恢复、重复 409、reject、cancel、400/403/404、真实 HTTP、并发配置 |
 | `tests/security.test.ts` | 7 | 域名、脚本注入、frame 注入、计划校验、文件路径、API 403 |
 | `tests/isolation.test.ts` | 1 | 两种租户并发隔离 + storageState 复用 + 用户隔离 |
+| `tests/reuse-stability.test.ts` | 2 | 连续 10 任务复用 storageState；4 租户并发互不污染 |
 | `tests/approval.test.ts` | 1 | 真实浏览器断点续跑、截图、409 |
 | `tests/custom-select.test.ts` | 1 | Radix + AntD 两种 DOM |
 | `tests/iframe.test.ts` | 1 | frameLocator 定位/点击/状态断言 |
@@ -478,6 +480,16 @@ GitHub Actions（`.github/workflows/ci.yml`）：
 - `permissions: contents: read`，`concurrency: ci-${{ github.ref }}`；
 - 无 DSN 时 Postgres 用例按 skip 报告，不连接共享数据库；
 - 当前 master 的 CI 状态见顶部 Build badge。
+
+### 连续 / 并发稳定性（一次性验证）
+
+2026-11-03 用 `tests/reuse-stability.test.ts` 在真实 Chromium + fixture 上实测：
+
+- 连续 10 个同 key 任务：**10 COMPLETED / 30 steps / 1 storageState ref**；每轮首跳都读回
+  上一任务写入的 cookie，归档未被重建。
+- 4 个不同租户并发：**4 COMPLETED / 12 steps / 4 storageState refs**；首跳均为「无 cookie」，
+  各自只读到自己的值，域名策略违规 0。
+- 两组用例合计约 11.6s。该结果只代表短时连续/并发，不代表长时间稳定性或多实例安全。
 
 ## 真实商品页验证
 
@@ -533,7 +545,8 @@ GitHub Actions（`.github/workflows/ci.yml`）：
 - **文件校验只看扩展名 / 大小**：上传不做内容扫描；下载不做 MIME / 内容嗅探。
 - **真实商品页依赖运行环境**：需要 `localhost:3000` 前端、既有 scm-auth/scm-product 与稳定
   `X-Device-ID`；条件不满足时 CLI 自动回落 `fixture`。
-- **未做长稳与多实例验证**：没有多实例会话归属、审批超时、归档清理与连接池监控。
+- **未做长稳与多实例验证**：只有一次 10 轮连续 + 4 租户并发的短时验证；没有多实例会话归属、
+  审批超时、归档清理与连接池监控。
 
 ## FAQ
 
