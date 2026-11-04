@@ -361,14 +361,17 @@ PENDING ──► RUNNING ──► COMPLETED
 
 - DSN 只从 `BROWSER_AGENT_PG_DSN` 读取，不写进源码、测试、日志或文档。
 - 独立库 `db_browser_agent`；`npm run db:init` 会校验 DSN 的库名，指向其他库直接拒绝。
-- 建表脚本：`scripts/db/schema.sql`；四张表：
+- 建表脚本：`scripts/db/schema.sql`；五张表：
 
 | 表 | 关键列 |
 |---|---|
-| `browser_task` | `task_id` PK、`tenant_id`、`user_id`、`task_type`、`status`、`target_system`、`target_url`、`input` jsonb、`execution_mode`、`created_at`、`updated_at`、`started_at`、`finished_at`、`result` jsonb、`error` jsonb、`session_summary` jsonb、`pending_approval` jsonb、`cancel_requested` |
+| `browser_task` | `task_id` PK、`tenant_id`、`user_id`、`task_type`、`status`、`target_system`、`target_url`、`input` jsonb、`execution_mode`、`created_at`、`updated_at`、`started_at`、`finished_at`、`result` jsonb、`error` jsonb、`session_summary` jsonb、`pending_approval` jsonb、`cancel_requested`；租约列 `lease_owner`、`lease_expires_at`、`heartbeat_at`、`version` |
 | `browser_task_step` | `(task_id, step_index)` PK、`action`、`target` jsonb、`status`、`expected` jsonb、`actual` jsonb、`validations` jsonb、`duration_ms`、`screenshot_path`、`started_at`、`error`、`approval` |
 | `browser_approval` | `id` PK、`task_id`、`step_index`（断点）、`action`、`decision`（`pending/approved/rejected`）、`approver`、`requested_at`、`decided_at`、页面快照字段 |
 | `browser_session_state` | `(tenant_id, user_id, task_type)` PK、`storage_state` jsonb、`updated_at` |
+| `browser_task_notification` | `id` PK、`task_id`、`kind`（`approve/reject/cancel`）、`payload` jsonb、`created_at`、`consumed_at`、`consumed_by`；唯一索引保证同一任务同一类型只有一条未消费通知 |
+
+`browser_task` 的 `lease_owner` / `lease_expires_at` / `heartbeat_at` 支撑 0.3.0 的 DB 级租约（原子认领、心跳续租、过期回收、守卫写回）；`version` 每次写入 +1，用于排障对比。`browser_task_notification` 是跨实例审批唤醒的信箱：非持有者只写通知，持有者轮询消费后才真正执行 approve/reject/cancel。
 
 `browser_session_state` 在 `(tenantId, taskType)` 基础上增加 `user_id`；不传 `userId` 时使用
 `default`。cookie 内容只存于该表或文件回落目录，日志只记录 cookie 名，不记录值。
