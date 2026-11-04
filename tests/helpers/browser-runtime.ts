@@ -26,6 +26,7 @@ export interface BrowserRuntime {
   service: TaskService;
   store: TaskStore;
   persistence: Persistence;
+  browser: BrowserManager;
   fixture: FixtureServer;
   config: ServiceConfig;
   artifactsDir: string;
@@ -99,6 +100,7 @@ export async function createBrowserRuntime(
     service,
     store,
     persistence,
+    browser,
     fixture,
     config,
     artifactsDir,
