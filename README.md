@@ -520,6 +520,10 @@ GitHub Actions（`.github/workflows/ci.yml`）：
 中峰值曾达 359MB（V8 堆未回收），因此泄漏判断以「强制 GC 后的存活内存」为准；该结果仍只覆盖
 100 轮 / 约 1.1 分钟，不等于小时级稳定性。
 
+CI（Linux，run `41756365225`）同用例复跑：**100/100 COMPLETED，61.8s，300 steps，1 ref**；
+RSS 首 **196.9MB** → 末 **208.0MB**、峰值 **208.1MB**、稳态斜率 **≈0.04MB/轮**；
+Browser 1 / Context 0 / 连接 2。两次运行都没有泄漏迹象。
+
 **多实例（`tests/multi-instance.test.ts`，2 个独立进程 + 共享 Postgres）**
 
 | 检查 | 实测 |
