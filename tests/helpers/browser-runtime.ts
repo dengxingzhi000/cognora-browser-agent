@@ -50,9 +50,10 @@ export async function createBrowserRuntime(
     ...(options.pgDsn ? { pgDsn: options.pgDsn } : {}),
   });
 
-  const logger = options.debug
-    ? createLogger({ artifactsDir, logToFile: false })
-    : createSilentLogger();
+  const logger =
+    options.debug || process.env.BROWSER_AGENT_DEBUG_LOG === '1'
+      ? createLogger({ artifactsDir, logToFile: false })
+      : createSilentLogger();
   const domainPolicy = new DomainPolicy(config.allowedHosts);
   const artifacts = new TaskArtifacts(config.artifactsDir);
   const persistence = await createPersistence(
@@ -63,7 +64,7 @@ export async function createBrowserRuntime(
     },
     logger
   );
-  const store = new TaskStore(persistence.tasks, logger);
+  const store = new TaskStore(persistence.tasks, logger, { leaseMs: config.taskLeaseMs });
   await store.init();
   await store.flush();
   const profiles = new SessionStateManager(persistence.sessions);

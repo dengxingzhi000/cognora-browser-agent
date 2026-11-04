@@ -1,7 +1,10 @@
+import { randomUUID } from 'node:crypto';
+import os from 'node:os';
+
 import { BrowserManager } from '../../src/browser/browser-manager.js';
 import { SessionManager } from '../../src/browser/session-manager.js';
 import { SessionStateManager } from '../../src/browser/session-state-manager.js';
-import { loadServiceConfig } from '../../src/config/config.js';
+import { loadServiceConfig, assertLeaseConfig } from '../../src/config/config.js';
 import { createLogger } from '../../src/observability/logger.js';
 import { TaskArtifacts } from '../../src/observability/run-records.js';
 import { createPersistence } from '../../src/persistence/factory.js';
@@ -21,6 +24,8 @@ export interface BrowserService {
 /** API 与 worker 在同一进程内组合；任务状态不持久化。 */
 export async function startBrowserService(): Promise<BrowserService> {
   const config = loadServiceConfig();
+  assertLeaseConfig(config);
+  const ownerId = `${os.hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`;
   const logger = createLogger({ artifactsDir: config.artifactsDir, logToFile: config.logToFile });
   const domainPolicy = new DomainPolicy(config.allowedHosts);
   const artifacts = new TaskArtifacts(config.artifactsDir);
@@ -32,7 +37,10 @@ export async function startBrowserService(): Promise<BrowserService> {
     },
     logger
   );
-  const store = new TaskStore(persistence.tasks, logger);
+  const store = new TaskStore(persistence.tasks, logger, {
+    ownerId,
+    leaseMs: config.taskLeaseMs,
+  });
   await store.init();
   await store.flush();
   const profiles = new SessionStateManager(persistence.sessions);
@@ -63,6 +71,7 @@ export async function startBrowserService(): Promise<BrowserService> {
     domainPolicy,
     artifacts,
     logger,
+    ownerId,
   });
 
   const app = createApiApp({ service, workflows, logger });
@@ -70,7 +79,11 @@ export async function startBrowserService(): Promise<BrowserService> {
   logger.info('service.starting', {
     port: config.port,
     host: config.host,
+    ownerId,
     workerConcurrency: config.workerConcurrency,
+    taskLeaseMs: config.taskLeaseMs,
+    taskHeartbeatMs: config.taskHeartbeatMs,
+    taskPollMs: config.taskPollMs,
     allowedHosts: domainPolicy.describe(),
     artifactsDir: config.artifactsDir,
     storageDriver: store.driver,
@@ -79,6 +92,9 @@ export async function startBrowserService(): Promise<BrowserService> {
 
   await app.listen({ port: config.port, host: config.host });
   logger.info('service.listening', { url: `http://${config.host}:${config.port}` });
+
+  // 只有租约驱动（Postgres）才启动跨实例 dispatcher；file/memory 保持进程内队列。
+  service.startDispatcher();
 
   const shutdown = async (): Promise<void> => {
     logger.info('service.stopping');

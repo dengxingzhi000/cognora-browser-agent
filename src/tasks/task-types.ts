@@ -65,6 +65,20 @@ export interface TaskRecord {
   cancelRequested: boolean;
   /** 任务级汇总 JSON 的落盘路径（仅排查用，进程重启不会回放） */
   summaryPath?: string;
+  /** 当前租约持有实例（多实例模式）；单实例驱动不设置。 */
+  leaseOwner?: string;
+  /** 租约到期时间；为空表示无人持有或已释放。 */
+  leaseExpiresAt?: string;
+  /** 单调版本号，每次认领 / 写回 +1。 */
+  version?: number;
+}
+
+/** 跨实例审批请求的结果：queued 表示已写入唤醒通知，等待持有实例消费。 */
+export interface ApprovalQueueResult {
+  taskId: string;
+  status: TaskStatus;
+  approval: 'queued';
+  owner?: string;
 }
 
 export interface TaskView extends Omit<TaskRecord, 'input'> {

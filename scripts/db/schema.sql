@@ -21,14 +21,31 @@ CREATE TABLE IF NOT EXISTS browser_task (
   error              jsonb,
   session_summary    jsonb,
   pending_approval   jsonb,
-  cancel_requested   boolean NOT NULL DEFAULT false
+  cancel_requested   boolean NOT NULL DEFAULT false,
+  -- 多实例租约：lease_owner 是实例自述身份；lease_expires_at 到期后其他实例可接管。
+  lease_owner        text,
+  lease_expires_at   timestamptz,
+  heartbeat_at       timestamptz,
+  -- 单调版本号：每次认领 / 写回 +1，便于排查「谁最后写了什么」。
+  version            bigint NOT NULL DEFAULT 0
 );
+
+-- 兼容已有库：CREATE TABLE IF NOT EXISTS 不会补列，这里显式补齐。
+ALTER TABLE browser_task ADD COLUMN IF NOT EXISTS lease_owner text;
+ALTER TABLE browser_task ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz;
+ALTER TABLE browser_task ADD COLUMN IF NOT EXISTS heartbeat_at timestamptz;
+ALTER TABLE browser_task ADD COLUMN IF NOT EXISTS version bigint NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS idx_browser_task_tenant_status
   ON browser_task (tenant_id, status, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_browser_task_type
   ON browser_task (task_type, created_at DESC);
+
+-- 认领用部分索引：只覆盖「可被认领」的行（PENDING 或租约已过期），减少扫描面。
+CREATE INDEX IF NOT EXISTS idx_browser_task_claimable
+  ON browser_task (created_at)
+  WHERE status = 'PENDING' OR lease_expires_at IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS browser_task_step (
   task_id          text NOT NULL REFERENCES browser_task (task_id) ON DELETE CASCADE,
@@ -79,3 +96,23 @@ CREATE TABLE IF NOT EXISTS browser_session_state (
   updated_at     timestamptz NOT NULL,
   PRIMARY KEY (tenant_id, user_id, task_type)
 );
+
+-- 跨实例审批唤醒：非租约持有者收到 approve 后写一行，持有者轮询消费。
+-- 每个任务的同类通知只保留一条未消费行（partial unique index），重复点击不会堆积。
+CREATE TABLE IF NOT EXISTS browser_task_notification (
+  id             bigserial PRIMARY KEY,
+  task_id        text NOT NULL REFERENCES browser_task (task_id) ON DELETE CASCADE,
+  kind           text NOT NULL CHECK (kind IN ('approve', 'reject', 'cancel')),
+  payload        jsonb NOT NULL DEFAULT '{}'::jsonb,
+  created_at     timestamptz NOT NULL DEFAULT now(),
+  consumed_at    timestamptz,
+  consumed_by    text
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_browser_task_notification_pending
+  ON browser_task_notification (task_id, kind)
+  WHERE consumed_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_browser_task_notification_open
+  ON browser_task_notification (created_at)
+  WHERE consumed_at IS NULL;
