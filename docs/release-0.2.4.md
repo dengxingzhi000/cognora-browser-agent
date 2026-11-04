@@ -33,6 +33,10 @@
 1. 不强制 GC 的观测中峰值曾达 359MB（V8 堆未回收），因此泄漏判断以强制 GC 后的存活内存为准；
 2. 只覆盖 100 轮 / 约 1.1 分钟，**没有** 60 分钟以上的小时级门禁，也没有真实商品页长跑。
 
+CI（Linux，run `41756365225`）用同一用例复跑：100/100 COMPLETED、61.8s、300 steps、1 ref；
+RSS 首 196.9MB → 末 208.0MB、峰值 208.1MB、稳态斜率 ≈0.04MB/轮；Browser 1 / Context 0 /
+连接 2。两次独立运行结论一致。
+
 ## 多实例（`tests/multi-instance.test.ts`）
 
 2 个独立进程（各自 API + worker + Browser）共享同一 Postgres，同一张 `browser_task` 表。
