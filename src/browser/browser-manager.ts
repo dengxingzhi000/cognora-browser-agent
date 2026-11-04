@@ -34,6 +34,14 @@ export class BrowserManager {
     return this.launching;
   }
 
+  /** 只读计数，供长跑 / 泄漏观测使用：Browser 实例数与未关闭的 Context 数。 */
+  stats(): { browsers: number; contexts: number } {
+    return {
+      browsers: this.browser ? 1 : 0,
+      contexts: this.browser ? this.browser.contexts().length : 0,
+    };
+  }
+
   async newContext(options: { storageState?: StorageStateInput } = {}): Promise<BrowserContext> {
     const browser = await this.launch();
     return browser.newContext({

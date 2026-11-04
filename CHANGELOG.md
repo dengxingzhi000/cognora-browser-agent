@@ -1,11 +1,48 @@
 # Changelog
 
-## Unreleased
+## 0.2.4 — 2026-11-04
+
+长跑稳定性与多实例归属的真实执行结果（一条通过、一条如实判定不支持）。
 
 ### Added
 
-- 新增 `tests/fixture-delay.test.ts`：锁定 fixture `/api/slow` 对超长 `ms` 的 5000ms 上限，
-  对应当前 CodeQL `js/resource-exhaustion` 告警的误报判定（本地靶场、输入已夹紧，未 dismiss）。
+- 新增 `tests/longrun-stability.test.ts`：同 key 连续 100 轮，每轮记录耗时、步骤数、
+  storageState ref、RSS、Browser/Context 数、Postgres 连接数；`BROWSER_AGENT_LONGRUN=1` 启用。
+  实测 **100/100 COMPLETED，0 失败，64.9s，300 steps，1 ref**；RSS 首 164.4MB → 末 176.4MB、
+  峰值 178.1MB（每轮强制 GC），稳态 51–100 轮斜率 ≈0.016MB/轮；Browser 恒为 1、Context 归零、
+  Postgres 连接恒为 2（池上限 5）。
+- 新增 `tests/multi-instance.test.ts`：2 个独立进程共享同一 Postgres，验证重复执行、
+  storageState 归属与重启行为；`BROWSER_AGENT_MULTI_INSTANCE=1` 启用。
+- 收纳此前 Unreleased 的 `tests/fixture-delay.test.ts`：锁定 fixture `/api/slow` 对超长 `ms`
+  的 5000ms 上限（CodeQL `js/resource-exhaustion` 误报判定的证据，告警已 dismiss）。
+
+### Changed
+
+- CI 在 `npm test` 之后增加两个独立步骤：100 轮长跑与 2 进程多实例实验（均使用一次性
+  Postgres 17 service）。
+
+### Verified
+
+- 长跑：**未观察到 Browser / Context / 连接池泄漏**；RSS 预热后进入平台期。仅覆盖 100 轮
+  （约 1.1 分钟），未跑满 60 分钟，未在真实商品页复跑。
+- 多实例：**不支持**。任务只在创建它的进程内执行，另一方不轮询（3 个 A 任务在 B 全部 404）；
+  同 key 跨实例命中同一归档、不同 tenant 不串；但任一实例启动会把整表非终态任务标记
+  `FAILED(WORKER_RESTARTED)`（实测 B 重启打失败 A 的 WAITING 任务，A 之后又覆盖为 COMPLETED），
+  approve 打到非持有实例返回 409，重启自身则不续跑、不双跑。
+- 需要补齐才能支持多实例：DB 认领（`FOR UPDATE SKIP LOCKED` / 条件 `UPDATE … RETURNING`）、
+  `lease_owner / lease_expires_at / heartbeat_at` 与心跳、只回收过期租约的启动恢复、带租约/版本
+  的写回、跨实例审批唤醒通道。
+- 清理：长跑数据删除 100 tasks + 1 session state；多实例临时 schema 删除前
+  9 tasks / 27 steps / 2 approvals / 5 session states，`DROP SCHEMA` 后四表均为 0；
+  公共库四表清理后为 0 行。
+
+### Known limitations
+
+- 长跑只有 100 轮 / 约 1.1 分钟；无 60 分钟以上的 CI 门禁，无真实页长跑。
+- 多实例共享 Postgres 仍不支持（无行锁 / 租约 / 版本写回）。
+- 同 key 并发归档仍为最后写入者覆盖，没有加锁。
+- VM 库 `db_browser_agent` 的本地复跑因凭据策略未执行；本次真实 Postgres 是本地临时实例
+  （17.6，`127.0.0.1:55432`，trust），CI 用的是一次性 service，两者都不是 VM 库。
 
 ## 0.2.3 — 2026-11-03
 

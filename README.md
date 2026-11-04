@@ -12,7 +12,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-7.0.2-3178C6?logo=typescript&logoColor=white&style=flat-square)](https://www.typescriptlang.org/)
 [![Playwright](https://img.shields.io/badge/Playwright-Chromium-2EAD33?logo=playwright&logoColor=white&style=flat-square)](https://playwright.dev/)
 [![Persistence](https://img.shields.io/badge/persistence-postgres%20%7C%20file%20%7C%20memory-4169E1?style=flat-square)](./scripts/db/schema.sql)
-[![Version](https://img.shields.io/badge/version-0.2.3-blue?style=flat-square)](https://github.com/dengxingzhi000/cognora-browser-agent/releases/tag/v0.2.3)
+[![Version](https://img.shields.io/badge/version-0.2.4-blue?style=flat-square)](https://github.com/dengxingzhi000/cognora-browser-agent/releases/tag/v0.2.4)
 
 [快速开始](#快速开始) · [能力概览](#能力概览) · [技术栈](#技术栈) · [架构](#架构) · [覆盖范围](#覆盖范围) · [API](#api-契约) · [持久化](#持久化) · [安全](#安全边界) · [测试](#测试与-ci) · [限制](#已知限制)
 
@@ -22,14 +22,14 @@
 
 > [!IMPORTANT]
 > 这是一个已验证核心链路的服务骨架，**不是生产可用系统**。任务 API 没有鉴权，默认只监听
-> `127.0.0.1:4320`；进程重启不会自动续跑；长时间稳定性与多实例尚未验证（仅做过 10 轮连续
-> + 4 租户并发的一次性验证）。部署前必须放在
-> 受控网络或网关之后，并补齐鉴权、审批超时、会话回收与多实例归属。
+> `127.0.0.1:4320`；进程重启不会自动续跑；已做 100 轮连续长跑（同 key，未观察到泄漏），
+> 但**多实例共享 Postgres 仍不支持**：没有行锁 / 租约，任一方启动都会把整表非终态任务标记
+> 失败。部署前必须放在受控网络或网关之后，并补齐鉴权、审批超时、会话回收与多实例归属。
 
 ---
 
 名称里的 `spike` 是历史遗留。这个仓库最初是一次性的 Playwright 验证脚本，现在已经拆成
-API、worker、执行层、安全策略、持久化与观测分层，并由 33 条测试覆盖。执行器不接受模型生成的
+API、worker、执行层、安全策略、持久化与观测分层，并由 35 条测试覆盖。执行器不接受模型生成的
 脚本，只接受 `goto / fill / select / selectCustom / click / upload / download / waitForResponse /
 waitForHidden / screenshot` 这类结构化动作；定位只使用 role、label、text 等语义方式。
 
@@ -53,11 +53,12 @@ npm ci
 ### 2. 本地验证
 
 ```powershell
-npm test          # 离线：33 tests / 31 passed / 2 skipped / 0 failed
+npm test          # 离线：35 tests / 31 passed / 4 skipped / 0 failed
 npm run typecheck # tsc --noEmit，0 错误
 ```
 
-两条 Postgres 测试在未设置 `BROWSER_AGENT_PG_DSN` 时按 skip 报告，不会连接共享数据库。
+两条 Postgres 测试与长跑 / 多实例用例在未设置 `BROWSER_AGENT_PG_DSN` / 未开启开关时按 skip
+报告，不会连接共享数据库。长跑与多实例在 CI 中是独立步骤真实执行。
 
 ### 3. 持久化（可选）
 
@@ -186,7 +187,7 @@ npm run spike:real-product   # 只跑真实登录 + 商品页探针
 | 安全执行 | 域名白名单双层拦截、动作白名单、元素唯一性 fail closed、反自动化检测 |
 | UI 交互 | 自定义 combobox、iframe、文件上传/下载、API 响应等待、spinner 消失等待 |
 | 观测 | 每步证据与截图、任务汇总、结构化日志、策略违规记录 |
-| 真实页面 | 已验证草稿保存与审批拦截；未做长时间稳定性验证 |
+| 真实页面 | 已验证草稿保存与审批拦截；未做真实页面长跑或多实例验证 |
 
 ## 组件
 
@@ -450,15 +451,16 @@ npm run typecheck
 本轮离线实测：
 
 ```text
-tests 33
+tests 35
 pass 31
 fail 0
-skipped 2   # Postgres 完整链路 / 集成检查（未设置 BROWSER_AGENT_PG_DSN）
+skipped 4   # 2 条 Postgres 用例 + 长跑 / 多实例（未设置 DSN 或未开启开关）
 ```
 
 `npm run typecheck`（`tsc --noEmit`）0 错误。CI 每次启动一次性 Postgres 17 service 并先执行
-`npm run db:init`，两条 Postgres 用例在 CI 中真实执行（33 passed / 0 skipped）；本地无 DSN 时
-仍按 skip 报告。
+`npm run db:init`，两条 Postgres 用例真实执行；随后是两个独立步骤：
+`BROWSER_AGENT_LONGRUN=1 npm run test:longrun`（100 轮）与
+`BROWSER_AGENT_MULTI_INSTANCE=1 npm run test:multi`（2 进程）。本地无 DSN 时这些用例按 skip 报告。
 
 | 文件 | 数量 | 覆盖 |
 |---|---|---|
@@ -475,10 +477,13 @@ skipped 2   # Postgres 完整链路 / 集成检查（未设置 BROWSER_AGENT_PG_
 | `tests/waits.test.ts` | 3 | spinner / API 等待、两种超时 |
 | `tests/postgres.integration.test.ts` | 1 | DSN 连通性 + 四张表结构（无 DSN skip，只读） |
 | `tests/postgres.flow.test.ts` | 1 | 临时 schema 内完整落库/审批/断点恢复链路（无 DSN skip） |
+| `tests/longrun-stability.test.ts` | 1 | 100 轮同 key 长跑度量：RSS / Browser / Context / Postgres 连接数（`BROWSER_AGENT_LONGRUN=1`） |
+| `tests/multi-instance.test.ts` | 1 | 2 进程共享 Postgres：重复执行、storageState 归属、重启行为（`BROWSER_AGENT_MULTI_INSTANCE=1`） |
 
 GitHub Actions（`.github/workflows/ci.yml`）：
 
 - Node 24、`npm ci`、`npx playwright install --with-deps chromium`、`npm run typecheck`、`npm test`；
+  之后独立执行 100 轮长跑与 2 进程多实例实验；
 - `permissions: contents: read`，`concurrency: ci-${{ github.ref }}`；
 - Postgres 17 service 仅存在于 runner，`trust` 认证、无密码，先 `npm run db:init` 建四张表；
   `BROWSER_AGENT_PG_DSN` 指向 `127.0.0.1/db_browser_agent`，不连接共享数据库，不写凭据进仓库；
@@ -492,7 +497,49 @@ GitHub Actions（`.github/workflows/ci.yml`）：
   上一任务写入的 cookie，归档未被重建。
 - 4 个不同租户并发：**4 COMPLETED / 12 steps / 4 storageState refs**；首跳均为「无 cookie」，
   各自只读到自己的值，域名策略违规 0。
-- 两组用例合计约 11.6s。该结果只代表短时连续/并发，不代表长时间稳定性或多实例安全。
+- 两组用例合计约 11.6s。该结果只代表短时连续/并发。
+
+### 长跑与多实例（真实执行，0.2.4）
+
+2026-11-04，在本地一次性 Postgres 17.6（`trust`、`127.0.0.1:55432`）+ 真实 Chromium + fixture
+上执行；每条用例使用独立临时 schema，结束后 `DROP SCHEMA`。
+
+**长跑（`tests/longrun-stability.test.ts`，100 轮同 key）**
+
+| 指标 | 结果 |
+|---|---|
+| 轮次 / 完成 / 失败 | 100 / 100 / **0** |
+| 总耗时 | **64.9s**（100 轮先到，未跑满 60 分钟） |
+| 每轮耗时 | P50 **634ms**，P95 **762ms**，3 steps/轮，共 300 steps |
+| storageState ref | **1**（`pg:longrun-.../u1/actions.run`，每轮读回上一轮 cookie） |
+| RSS（每轮强制 GC 后） | 首 **164.4MB** → 末 **176.4MB**，峰值 **178.1MB**；稳态（51–100 轮）斜率 **≈0.016MB/轮** |
+| 浏览器实例 / Context | Browser 恒为 **1**；每轮结束 Context **0**（无泄漏） |
+| Postgres 连接 | 全程 **2**（池上限 5，未耗尽） |
+
+结论：**未观察到浏览器、Context 或连接池泄漏，RSS 在预热后进入平台期**。注意未强制 GC 的观测
+中峰值曾达 359MB（V8 堆未回收），因此泄漏判断以「强制 GC 后的存活内存」为准；该结果仍只覆盖
+100 轮 / 约 1.1 分钟，不等于小时级稳定性。
+
+**多实例（`tests/multi-instance.test.ts`，2 个独立进程 + 共享 Postgres）**
+
+| 检查 | 实测 |
+|---|---|
+| 重复执行 | A 上连建 3 个任务：3 COMPLETED；B 查询这 3 个任务全部 404，未执行、未轮询 |
+| storageState 归属 | 同 `(tenant,user,type)` 跨实例命中同一 ref；不同 tenant 各自 ref，不串 |
+| 同 key 并发归档 | 仍为「最后完成者覆盖」，未加锁（既有已知限制） |
+| 重启 B（A 有 WAITING 任务） | B 启动把 A 的 `WAITING_APPROVAL` 在库里改成 `FAILED(WORKER_RESTARTED)`；A 内存仍为 WAITING；approve 打到 B 返回 409 `INVALID_TASK_TRANSITION`；打到 A 后完成，库里最终又被覆盖为 COMPLETED |
+| 重启 A（有 WAITING 任务） | 任务被标记 `FAILED(WORKER_RESTARTED)`；重启前后步骤数均为 3，3 秒后仍为 FAILED，**没有双跑也没有续跑** |
+
+结论：**当前架构不支持多实例归属**。任务只在收到创建请求的进程内执行，另一方不会接管；
+启动恢复会把整表非终态任务打成失败；写回是无版本校验的 upsert（最后写入者胜）。要支持多实例
+至少需要：(1) 数据库级认领 `SELECT … FOR UPDATE SKIP LOCKED` 或条件 `UPDATE … RETURNING`；
+(2) `lease_owner / lease_expires_at / heartbeat_at` 列与心跳续租；(3) 启动恢复只回收过期租约，
+不再整表失败；(4) 带租约 / 版本的写回，拒绝非持有者写入；(5) approve / cancel 跨实例路由或共享
+唤醒通道（当前只有进程内队列）。
+
+**清理**：长跑删除 100 行任务 + 1 行 storageState；多实例临时 schema 删除前为
+9 tasks / 27 steps / 2 approvals / 5 session states，`DROP SCHEMA` 后为 **0 / 0 / 0 / 0**；
+公共库四张表在清理后仍为 **0 行**。
 
 ## 真实商品页验证
 
@@ -513,8 +560,8 @@ GitHub Actions（`.github/workflows/ci.yml`）：
   尝试，由审批闸门拦截；真实页不可用时回落 `fixture`。
 - 测试凭据只在浏览器进程内使用；仓库文件、日志、测试输出均不包含密码、token 或 cookie 原始值。
 
-**边界**：以上只证明草稿保存与审批闸门在该环境可用；未做长时间稳定性、并发压测或多实例
-验证，不能据此声称「真实页面全流程稳定」或「生产可用」。
+**边界**：以上只证明草稿保存与审批闸门在该环境可用；未在真实商品页做长跑或多实例验证，
+不能据此声称「真实页面全流程稳定」或「生产可用」。
 
 ## 运维
 
@@ -548,8 +595,11 @@ GitHub Actions（`.github/workflows/ci.yml`）：
 - **文件校验只看扩展名 / 大小**：上传不做内容扫描；下载不做 MIME / 内容嗅探。
 - **真实商品页依赖运行环境**：需要 `localhost:3000` 前端、既有 scm-auth/scm-product 与稳定
   `X-Device-ID`；条件不满足时 CLI 自动回落 `fixture`。
-- **未做长稳与多实例验证**：只有一次 10 轮连续 + 4 租户并发的短时验证；没有多实例会话归属、
-  审批超时、归档清理与连接池监控。
+- **多实例归属不支持**：任务只在收到创建请求的进程内执行；任一实例启动都会把整表非终态任务
+  标记 `FAILED`；写回无版本 / 租约校验。实测证据与所需机制见「长跑与多实例」一节。
+- **长跑只覆盖 100 轮 / 约 1.1 分钟**：未设置 60 分钟以上的小时级门禁，未做真实商品页长跑；
+  RSS 结论基于「每轮强制 GC 后的存活内存」。
+- **无审批超时 / 归档清理**：等待审批的浏览器会话一直保留；storageState 归档没有 TTL。
 
 ## FAQ
 
@@ -590,16 +640,17 @@ Postgres / 文件加载。
 ## 文档
 
 - [CHANGELOG.md](./CHANGELOG.md) — 版本变更与已知限制
-- [docs/release-0.2.3.md](./docs/release-0.2.3.md) — 当前版本的部署、已验证能力与边界
-- [docs/release-0.2.2.md](./docs/release-0.2.2.md) — 上一版本（依赖升级）
+- [docs/release-0.2.4.md](./docs/release-0.2.4.md) — 当前版本：长跑与多实例实测、边界与部署
+- [docs/release-0.2.3.md](./docs/release-0.2.3.md) — 上一版本（CI Postgres service 与 10 轮稳定性用例）
+- [docs/release-0.2.2.md](./docs/release-0.2.2.md) — 依赖升级
 - [.env.example](./.env.example) — 所有环境变量与默认值
 - [scripts/db/schema.sql](./scripts/db/schema.sql) — 四张 `browser_*` 表
 - [.github/workflows/ci.yml](./.github/workflows/ci.yml) — CI 流程
-- [v0.2.3 Release](https://github.com/dengxingzhi000/cognora-browser-agent/releases/tag/v0.2.3)
+- [v0.2.4 Release](https://github.com/dengxingzhi000/cognora-browser-agent/releases/tag/v0.2.4)
 
 ## 贡献
 
 - Bug / 功能建议请用 `.github/ISSUE_TEMPLATE/` 下的模板开 issue。
-- PR 请遵循 `.github/PULL_REQUEST_TEMPLATE.md`；CI 会执行 `npm ci`、`npm run typecheck` 与
-  `npm test`。无 DSN 时 Postgres 用例 skip 属于预期行为。
+- PR 请遵循 `.github/PULL_REQUEST_TEMPLATE.md`；CI 会执行 `npm ci`、`npm run typecheck`、
+  `npm test`，并额外跑 100 轮长跑与 2 进程多实例实验。无 DSN 时相关用例 skip 属于预期行为。
 - 不要提交 DSN、密码、token、cookie 或 `.env`。真实页面测试凭据只通过进程环境变量传入。
