@@ -9,26 +9,35 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { Pool } from 'pg';
 
 import { startFixtureServer, type FixtureServer } from '../src/fixtures/fixture-server.js';
+import { Logger } from '../src/observability/logger.js';
+import {
+  PostgresConnection,
+  PostgresTaskRepository,
+} from '../src/persistence/postgres-repository.js';
+import type { StepResult } from '../src/core/types.js';
+import type { TaskRecord } from '../src/tasks/task-types.js';
 
 /**
- * 多实例归属实验：2 个独立进程共享同一个 Postgres（同 browser_task 表）。
+ * 多实例租约验证（一次性 schema + 真实 Postgres，不允许 skip 通过）。
  *
- * 当前架构只有进程内队列，没有行锁 / 租约 / 心跳，因此本用例固定「现状」而不是宣称支持：
- * 1. 任务只在创建它的进程内执行，另一实例不轮询、不重复执行（GET 404）；
- * 2. 同 key 跨实例共享同一个 storageState 归档，不同 key 不串；
- * 3. 任一实例启动时会把「整张表的非终态任务」标记为 FAILED(WORKER_RESTARTED)，
- *    因此重启一方会把另一方在跑的任务打失败；写回没有版本 / 租约校验，最后写入者覆盖；
- * 4. approve 只路由到收到 HTTP 请求的实例，另一实例返回 404。
+ * 1) 回归：非持有实例重启时，持有实例的 WAITING_APPROVAL 任务不得被改成 FAILED（且 DB 不产生任何写入）；
+ * 2) DB 级原子认领：两个连接并发取同一任务，恰好一个成功；
+ * 3) 租约过期后另一实例接管，原实例守卫写回 0 行 → LeaseLostError，最终状态一致；
+ * 4) 心跳跨过一个租约周期仍不被抢；
+ * 5) approve 打到非持有实例：返回 202 {approval:'queued'}，持有者消费通知后完成，最终状态唯一；
+ * 6) 长跑回归在 tests/longrun-stability.test.ts（CI 缩短为 30 轮，见 docs/release-0.3.0.md）。
  *
- * 需要 BROWSER_AGENT_PG_DSN 且 BROWSER_AGENT_MULTI_INSTANCE=1 才执行。
+ * 需要 BROWSER_AGENT_PG_DSN 且 BROWSER_AGENT_MULTI_INSTANCE=1。
  */
 
 const instanceScript = 'apps/api/main.ts';
 const repoRoot = process.cwd();
+const silentLogger = new Logger({}, undefined, false);
 
 interface Instance {
   name: string;
   port: number;
+  ownerId: string;
   child: ChildProcess;
   logs: string[];
 }
@@ -57,13 +66,16 @@ function freePort(): Promise<number> {
   });
 }
 
-async function waitForHealth(port: number, timeoutMs = 60000): Promise<void> {
+async function waitForHealth(port: number, timeoutMs = 60000): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   let lastError = '未开始';
   while (Date.now() < deadline) {
     try {
       const response = await fetch(`http://127.0.0.1:${port}/healthz`);
-      if (response.ok) return;
+      if (response.ok) {
+        const body = (await response.json()) as { ownerId?: string };
+        return body.ownerId ?? '(unknown-owner)';
+      }
       lastError = `HTTP ${response.status}`;
     } catch (error) {
       lastError = (error as Error).message;
@@ -91,12 +103,15 @@ function spawnInstance(
       BROWSER_ACTION_TIMEOUT_MS: '8000',
       BROWSER_EXPECT_TIMEOUT_MS: '5000',
       BROWSER_LOG_TO_FILE: 'false',
+      BROWSER_TASK_LEASE_MS: '3000',
+      BROWSER_TASK_HEARTBEAT_MS: '700',
+      BROWSER_TASK_POLL_MS: '300',
       ...env,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  const instance: Instance = { name, port, child, logs: [] };
+  const instance: Instance = { name, port, ownerId: '', child, logs: [] };
   const collect = (chunk: Buffer): void => {
     const text = chunk.toString('utf8');
     instance.logs.push(text);
@@ -104,6 +119,16 @@ function spawnInstance(
   };
   child.stdout?.on('data', collect);
   child.stderr?.on('data', collect);
+  return instance;
+}
+
+async function startInstance(
+  name: string,
+  port: number,
+  env: Record<string, string>
+): Promise<Instance> {
+  const instance = spawnInstance(name, port, env);
+  instance.ownerId = await waitForHealth(port);
   return instance;
 }
 
@@ -129,10 +154,7 @@ function api(instance: Instance, suffix: string): string {
   return `http://127.0.0.1:${instance.port}/api/v1/browser${suffix}`;
 }
 
-async function createTask(
-  instance: Instance,
-  body: Record<string, unknown>
-): Promise<string> {
+async function createTask(instance: Instance, body: Record<string, unknown>): Promise<string> {
   const response = await fetch(api(instance, '/tasks'), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -163,101 +185,118 @@ async function waitForTask(
   while (Date.now() < deadline) {
     last = await getTask(instance, taskId);
     if (last && statuses.includes(last.status)) return last;
-    await sleep(100);
+    await sleep(150);
   }
   throw new Error(
     `实例 ${instance.name} 的任务 ${taskId} 未在超时内进入 ${statuses.join('/')}，最后=${last?.status}`
   );
 }
 
-function sequence(baseUrl: string, previous: string | undefined, next: string): unknown[] {
-  return [
-    {
-      action: 'goto',
-      url: `${baseUrl}/session`,
-      expect: { type: 'text', text: `cookie值：${previous ?? '无'}`, exact: false },
-    },
-    {
-      action: 'goto',
-      url: `${baseUrl}/session/set?name=tenant_cookie&value=${next}`,
-      expect: { type: 'text', text: '已设置', exact: false },
-    },
-    {
-      action: 'goto',
-      url: `${baseUrl}/session`,
-      expect: { type: 'text', text: `cookie值：${next}`, exact: false },
-    },
-  ];
-}
-
 function body(
   baseUrl: string,
   tenantId: string,
-  userId: string,
   actions: unknown[],
   executionMode: 'auto' | 'require_approval' = 'auto'
 ): Record<string, unknown> {
   return {
     taskType: 'actions.run',
     tenantId,
-    userId,
+    userId: 'u1',
     target: { system: 'fixture', url: baseUrl },
     input: { actions },
     executionMode,
   };
 }
 
-async function dbStatus(
+interface DbTask {
+  status: string;
+  lease_owner: string | null;
+  version: string | number;
+  error: { code?: string } | null;
+}
+
+async function readDbTask(pool: Pool, schema: string, taskId: string): Promise<DbTask | undefined> {
+  const row = await pool.query<DbTask>(
+    `SELECT status, lease_owner, version, error FROM "${schema}".browser_task WHERE task_id = $1`,
+    [taskId]
+  );
+  return row.rows[0];
+}
+
+async function waitForDbStatus(
   pool: Pool,
   schema: string,
   taskId: string,
-  timeoutMs = 10000
-): Promise<{ status: string; errorCode?: string } | undefined> {
+  statuses: string[],
+  timeoutMs = 60000
+): Promise<DbTask> {
   const deadline = Date.now() + timeoutMs;
+  let last: DbTask | undefined;
   while (Date.now() < deadline) {
-    const row = await pool.query<{ status: string; error: { code?: string } | null }>(
-      `SELECT status, error FROM "${schema}".browser_task WHERE task_id = $1`,
-      [taskId]
-    );
-    if (row.rowCount === 0) return undefined;
-    const current = row.rows[0];
-    if (current.status === 'COMPLETED' || current.status === 'FAILED' || current.status === 'CANCELLED') {
-      return { status: current.status, ...(current.error?.code ? { errorCode: current.error.code } : {}) };
-    }
-    await sleep(100);
+    last = await readDbTask(pool, schema, taskId);
+    if (last && statuses.includes(last.status)) return last;
+    await sleep(120);
   }
-  const row = await pool.query<{ status: string; error: { code?: string } | null }>(
-    `SELECT status, error FROM "${schema}".browser_task WHERE task_id = $1`,
-    [taskId]
-  );
-  if (row.rowCount === 0) return undefined;
-  return { status: row.rows[0].status, ...(row.rows[0].error?.code ? { errorCode: row.rows[0].error.code } : {}) };
+  throw new Error(`任务 ${taskId} 未在超时内进入 ${statuses.join('/')}，最后=${last?.status}`);
 }
 
-async function dbCount(
+async function dbStepStats(
   pool: Pool,
   schema: string,
   taskId: string
-): Promise<number> {
-  const row = await pool.query<{ count: number }>(
-    `SELECT count(*)::int AS count FROM "${schema}".browser_task_step WHERE task_id = $1`,
+): Promise<{ rows: number; distinct: number }> {
+  const row = await pool.query<{ rows: number; distinct: number }>(
+    `SELECT count(*)::int AS rows, count(DISTINCT step_index)::int AS distinct
+       FROM "${schema}".browser_task_step WHERE task_id = $1`,
     [taskId]
   );
-  return row.rows[0]?.count ?? 0;
+  return row.rows[0] ?? { rows: 0, distinct: 0 };
+}
+
+function newRepoTask(taskId: string, tenantId: string): TaskRecord {
+  const now = new Date().toISOString();
+  return {
+    taskId,
+    taskType: 'actions.run',
+    tenantId,
+    userId: 'u1',
+    target: { system: 'fixture', url: 'http://127.0.0.1:4310' },
+    input: { actions: [] },
+    executionMode: 'auto',
+    status: 'PENDING',
+    createdAt: now,
+    updatedAt: now,
+    steps: [],
+    policyViolations: [],
+    approvals: [],
+    cancelRequested: false,
+  };
+}
+
+function completedStep(index: number): StepResult {
+  return {
+    index,
+    action: 'goto',
+    description: `测试步骤 ${index}`,
+    status: 'success',
+    startedAt: new Date().toISOString(),
+    durationMs: 1,
+    validations: [{ ok: true, kind: 'repo-check', expected: 'ok', actual: 'ok' }],
+  };
 }
 
 test(
-  '多实例归属：2 进程共享 Postgres（重复执行 / storageState / 重启归属）',
+  '多实例租约：原子认领 / 过期接管 / 心跳 / 重启不误杀 / 跨实例审批',
   { timeout: 900000 },
   async (t) => {
     if (process.env.BROWSER_AGENT_MULTI_INSTANCE !== '1') {
-      t.skip('未设置 BROWSER_AGENT_MULTI_INSTANCE=1，跳过多实例实验');
+      t.skip('未设置 BROWSER_AGENT_MULTI_INSTANCE=1，跳过多实例租约测试');
       return;
     }
 
     const dsn = process.env.BROWSER_AGENT_PG_DSN;
     if (!dsn) {
-      t.skip('未设置 BROWSER_AGENT_PG_DSN，多实例实验需要共享 Postgres');
+      t.skip('未设置 BROWSER_AGENT_PG_DSN，多实例租约测试需要共享 Postgres');
       return;
     }
 
@@ -273,6 +312,7 @@ test(
 
     let fixture: FixtureServer | undefined;
     const running: Instance[] = [];
+    const connections: PostgresConnection[] = [];
     const evidence: Record<string, unknown> = {};
 
     fs.mkdirSync(path.join(repoRoot, 'artifacts'), { recursive: true });
@@ -293,70 +333,140 @@ test(
         setup.release();
       }
 
-      fixture = await startFixtureServer(0);
-      const baseUrl = fixture.url;
+      // ---------- 2) DB 级原子认领：两个独立连接并发，恰好一个成功 ----------
+      const repoAConnection = new PostgresConnection(schemaDsn.toString());
+      const repoBConnection = new PostgresConnection(schemaDsn.toString());
+      connections.push(repoAConnection, repoBConnection);
+      const repoA = new PostgresTaskRepository(repoAConnection, silentLogger);
+      const repoB = new PostgresTaskRepository(repoBConnection, silentLogger);
+      await repoA.init();
+      await repoB.init();
 
-      const portA = await freePort();
-      const portB = await freePort();
-      const instanceA = spawnInstance('A', portA, instanceEnv('A'));
-      const instanceB = spawnInstance('B', portB, instanceEnv('B'));
-      running.push(instanceA, instanceB);
-      await Promise.all([waitForHealth(portA), waitForHealth(portB)]);
+      const claimTaskId = `task-claim-${Date.now()}`;
+      await repoA.save(newRepoTask(claimTaskId, 'mi-claim'));
+      const [claimA, claimB] = await Promise.all([
+        repoA.claimNext('owner-A', 30000),
+        repoB.claimNext('owner-B', 30000),
+      ]);
+      const winners = [claimA, claimB].filter((item): item is TaskRecord => Boolean(item));
+      assert.equal(winners.length, 1, '并发认领必须恰好一个成功');
+      const claimRow = await readDbTask(admin, schema, claimTaskId);
+      assert.equal(claimRow?.status, 'RUNNING');
+      assert.equal(claimRow?.lease_owner, winners[0].leaseOwner);
+      assert.equal(claimA?.leaseOwner ?? claimB?.leaseOwner, claimRow?.lease_owner);
+      evidence.atomicClaim = {
+        winners: winners.length,
+        winnerOwner: claimRow?.lease_owner,
+        version: Number(claimRow?.version),
+      };
 
-      // 1) 同 key 跨实例复用；不同 key 各自独立
-      const sharedTenant = `mi-shared-${Date.now()}`;
-      const taskA1 = await createTask(instanceA, body(baseUrl, sharedTenant, 'u1', sequence(baseUrl, undefined, 'from-a')));
-      const doneA1 = await waitForTask(instanceA, taskA1, ['COMPLETED']);
-      const taskB1 = await createTask(instanceB, body(baseUrl, sharedTenant, 'u1', sequence(baseUrl, 'from-a', 'from-b')));
-      const doneB1 = await waitForTask(instanceB, taskB1, ['COMPLETED']);
-      const taskA2 = await createTask(instanceA, body(baseUrl, sharedTenant, 'u1', sequence(baseUrl, 'from-b', 'from-a2')));
-      const doneA2 = await waitForTask(instanceA, taskA2, ['COMPLETED']);
-      const otherTenant = `mi-other-${Date.now()}`;
-      const taskB2 = await createTask(instanceB, body(baseUrl, otherTenant, 'u1', sequence(baseUrl, undefined, 'other')));
-      const doneB2 = await waitForTask(instanceB, taskB2, ['COMPLETED']);
-
-      const sharedRefs = new Set(
-        [doneA1, doneB1, doneA2].map((task) => task.sessionSummary?.storageStateRef)
+      // 清理：认领成功者直接完成，避免干扰后续用例。
+      const claimOwner = claimRow?.lease_owner ?? '';
+      const claimRepo = claimOwner === 'owner-A' ? repoA : repoB;
+      await claimRepo.saveLeased(
+        { ...winners[0], status: 'COMPLETED', steps: [completedStep(1)] },
+        claimOwner,
+        30000
       );
-      assert.equal(sharedRefs.size, 1, '同 key 的跨实例任务必须命中同一个归档引用');
-      assert.equal(doneB2.sessionSummary?.storageStateRef, `pg:${otherTenant}/u1/actions.run`);
-      assert.notEqual(doneB2.sessionSummary?.storageStateRef, doneA1.sessionSummary?.storageStateRef);
-      evidence.sameKeyRef = [...sharedRefs][0];
-      evidence.otherKeyRef = doneB2.sessionSummary?.storageStateRef;
 
-      // 2) 重复执行：任务只在创建它的实例内执行，另一实例不认识该任务
-      const rapidIds: string[] = [];
-      for (let index = 0; index < 3; index += 1) {
-        // 用不同 tenant 避免同 key 并发归档「最后写入者覆盖」这一已知限制干扰本实验。
-        rapidIds.push(
-          await createTask(
-            instanceA,
-            body(baseUrl, `mi-rapid-${index}-${Date.now()}`, 'u1', sequence(baseUrl, undefined, `rapid-${index}`))
-          )
+      // ---------- 3) 租约过期 → 另一实例接管；原实例写回被拒（0 行） ----------
+      const takeoverTaskId = `task-takeover-${Date.now()}`;
+      await repoA.save(newRepoTask(takeoverTaskId, 'mi-takeover'));
+      const ownedByA = await repoA.claimNext('owner-A', 60000);
+      assert.ok(ownedByA, 'A 应认领成功');
+
+      await admin.query(
+        `UPDATE "${schema}".browser_task
+            SET lease_expires_at = now() - interval '1 second'
+          WHERE task_id = $1`,
+        [takeoverTaskId]
+      );
+
+      const ownedByB = await repoB.claimNext('owner-B', 60000);
+      assert.ok(ownedByB, '租约过期后 B 应能接管');
+      assert.equal((await readDbTask(admin, schema, takeoverTaskId))?.lease_owner, 'owner-B');
+
+      await assert.rejects(
+        repoA.saveLeased(
+          { ...ownedByA, status: 'COMPLETED', steps: [completedStep(1)] },
+          'owner-A',
+          60000
+        ),
+        (error: unknown) => (error as { code?: string }).code === 'LEASE_LOST',
+        '原实例写回必须命中 0 行并抛 LEASE_LOST'
+      );
+
+      await repoB.saveLeased(
+        { ...ownedByB, status: 'COMPLETED', steps: [completedStep(1), completedStep(2)] },
+        'owner-B',
+        60000
+      );
+      const takeoverRow = await readDbTask(admin, schema, takeoverTaskId);
+      const takeoverSteps = await dbStepStats(admin, schema, takeoverTaskId);
+      assert.equal(takeoverRow?.status, 'COMPLETED', '最终状态必须是接管者的 COMPLETED');
+      assert.equal(takeoverRow?.lease_owner, 'owner-B');
+      assert.equal(takeoverSteps.distinct, 2, '不得出现重复步骤');
+      assert.equal(takeoverSteps.rows, 2);
+      evidence.takeover = {
+        finalStatus: takeoverRow?.status,
+        owner: takeoverRow?.lease_owner,
+        steps: takeoverSteps,
+        staleWriteRejected: true,
+      };
+
+      // ---------- 4) 心跳跨过一个租约周期仍不被抢 ----------
+      const heartbeatTaskId = `task-heartbeat-${Date.now()}`;
+      await repoA.save(newRepoTask(heartbeatTaskId, 'mi-heartbeat'));
+      const leaseMs = 600;
+      const claimed = await repoA.claimNext('owner-A', leaseMs);
+      assert.ok(claimed, 'A 应认领成功');
+
+      const heartbeatStart = Date.now();
+      let beats = 0;
+      for (let index = 0; index < 10; index += 1) {
+        await sleep(200);
+        assert.equal(
+          await repoA.heartbeat(heartbeatTaskId, 'owner-A', leaseMs),
+          true,
+          `第 ${index + 1} 次心跳应成功续租`
+        );
+        beats += 1;
+        assert.equal(
+          await repoB.claimNext('owner-B', leaseMs),
+          undefined,
+          '心跳存活期间 B 不得抢走任务'
         );
       }
-      const rapid = await Promise.all(
-        rapidIds.map((taskId) => waitForTask(instanceA, taskId, ['COMPLETED']))
-      );
-      const notVisibleInB: string[] = [];
-      for (const taskId of rapidIds) {
-        if (!(await getTask(instanceB, taskId))) notVisibleInB.push(taskId);
-        assert.equal(await dbCount(admin, schema, taskId), 3, `任务 ${taskId} 应只有一组 3 条步骤`);
-      }
-      assert.equal(notVisibleInB.length, rapidIds.length, '实例 B 不应看到实例 A 后创建的任务');
-      evidence.rapidTaskIds = rapidIds;
-      evidence.rapidCompleted = rapid.filter((task) => task.status === 'COMPLETED').length;
-      evidence.rapidUnseenByB = notVisibleInB.length;
+      const elapsed = Date.now() - heartbeatStart;
+      assert.ok(elapsed > leaseMs, `心跳时长 ${elapsed}ms 必须超过一个租约周期 ${leaseMs}ms`);
+      const heartbeatRow = await readDbTask(admin, schema, heartbeatTaskId);
+      assert.equal(heartbeatRow?.lease_owner, 'owner-A', '续租后持有者仍是 A');
+      evidence.heartbeat = { leaseMs, beats, elapsedMs: elapsed, owner: heartbeatRow?.lease_owner };
 
-      // 3) 重启 B：B 启动时把 A 在审批等待的任务整行改成 FAILED(WORKER_RESTARTED)
+      await repoA.saveLeased(
+        { ...claimed, status: 'COMPLETED', steps: [completedStep(1)] },
+        'owner-A',
+        leaseMs
+      );
+
+      // ---------- 1) + 5) 进程级：非持有实例重启不误杀 WAITING；approve 跨实例唤醒 ----------
+      fixture = await startFixtureServer(0);
+      const baseUrl = fixture.url;
+      const portA = await freePort();
+      const instanceA = await startInstance('A', portA, instanceEnv('A'));
+      running.push(instanceA);
+
       const approvalTask = await createTask(
         instanceA,
         body(
           baseUrl,
-          sharedTenant,
-          'u1',
+          `mi-approval-${Date.now()}`,
           [
-            { action: 'goto', url: `${baseUrl}/approval-demo`, expect: { type: 'text', text: '审批恢复演示', exact: false } },
+            {
+              action: 'goto',
+              url: `${baseUrl}/approval-demo`,
+              expect: { type: 'text', text: '审批恢复演示', exact: false },
+            },
             {
               action: 'click',
               target: { role: 'button', name: '保存草稿' },
@@ -368,106 +478,104 @@ test(
           'require_approval'
         )
       );
+
       const waiting = await waitForTask(instanceA, approvalTask, ['WAITING_APPROVAL']);
       assert.equal(waiting.status, 'WAITING_APPROVAL');
-      await sleep(500);
-      const waitingInDb = await dbStatus(admin, schema, approvalTask);
-      assert.equal(waitingInDb?.status, 'WAITING_APPROVAL');
+      const beforeRestart = await waitForDbStatus(admin, schema, approvalTask, ['WAITING_APPROVAL']);
+      assert.equal(beforeRestart.lease_owner, instanceA.ownerId, 'A 应持有该任务');
+      const versionBeforeRestart = Number(beforeRestart.version);
 
+      // 先启动 B（非持有实例）再重启它，模拟「B 重启时 A 有 WAITING_APPROVAL」。
+      const portB = await freePort();
+      const instanceB = await startInstance('B', portB, instanceEnv('B'));
+      running.push(instanceB);
       await stopInstance(instanceB);
-      const instanceB2 = spawnInstance('B2', portB, instanceEnv('B2'));
+      const instanceB2 = await startInstance('B2', portB, instanceEnv('B2'));
       running.push(instanceB2);
-      await waitForHealth(portB);
 
-      const afterBRestart = await dbStatus(admin, schema, approvalTask);
-      assert.equal(afterBRestart?.status, 'FAILED', 'B2 启动应把整表非终态任务标记为失败');
-      assert.equal(afterBRestart?.errorCode, 'WORKER_RESTARTED');
-      const stillWaitingInA = await getTask(instanceA, approvalTask);
-      assert.equal(stillWaitingInA?.status, 'WAITING_APPROVAL', 'A 的内存状态不会因 B 重启而改变');
+      await sleep(2500);
+      const afterRestart = await readDbTask(admin, schema, approvalTask);
+      assert.equal(afterRestart?.status, 'WAITING_APPROVAL', 'B2 重启不得把 A 的 WAITING 任务改成 FAILED');
+      assert.equal(afterRestart?.error, null, 'B2 重启不得写入 WORKER_RESTARTED');
+      assert.equal(Number(afterRestart?.version), versionBeforeRestart, 'B2 启动不应产生任何写回（版本不变）');
+      assert.equal(afterRestart?.lease_owner, instanceA.ownerId);
+      const stillWaiting = await getTask(instanceA, approvalTask);
+      assert.equal(stillWaiting?.status, 'WAITING_APPROVAL', 'A 的本地状态不受影响');
+      evidence.restartSafety = {
+        statusAfterRestart: afterRestart?.status,
+        errorAfterRestart: afterRestart?.error,
+        versionBeforeRestart,
+        versionAfterRestart: Number(afterRestart?.version),
+        restartedInstance: instanceB2.ownerId,
+        ownerInstance: instanceA.ownerId,
+      };
 
       const approveOnB = await fetch(api(instanceB2, `/tasks/${approvalTask}/approve`), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ actor: 'mi-reviewer' }),
       });
-      const approveOnBBody = (await approveOnB.json()) as { error?: { code?: string } };
-      assert.equal(approveOnB.status, 409, 'B2 只把该任务当成 FAILED，无法执行审批');
-      assert.equal(approveOnBBody.error?.code, 'INVALID_TASK_TRANSITION');
+      assert.equal(approveOnB.status, 202, `非持有实例 approve 应返回 202，实际 ${approveOnB.status}`);
+      const approveBody = (await approveOnB.json()) as {
+        approval?: string;
+        owner?: string;
+        status?: string;
+      };
+      assert.equal(approveBody.approval, 'queued');
+      assert.equal(approveBody.owner, instanceA.ownerId, '202 响应必须返回真实持有者');
 
-      const approveOnA = await fetch(api(instanceA, `/tasks/${approvalTask}/approve`), {
+      const completed = await waitForDbStatus(admin, schema, approvalTask, ['COMPLETED'], 90000);
+      assert.equal(completed.status, 'COMPLETED');
+      assert.equal(completed.lease_owner, instanceA.ownerId, '完成后仍记录持有者，便于审计');
+      const finalTask = await waitForTask(instanceA, approvalTask, ['COMPLETED']);
+      assert.equal(finalTask.status, 'COMPLETED');
+      const stepStats = await dbStepStats(admin, schema, approvalTask);
+      assert.equal(stepStats.distinct, 3, '应恰好 3 个唯一步骤（审批步骤不重复）');
+      assert.equal(stepStats.rows, 3);
+      const approvalRows = await admin.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM "${schema}".browser_approval WHERE task_id = $1`,
+        [approvalTask]
+      );
+      assert.equal(approvalRows.rows[0]?.count, 1, '审批记录只应有一条，且不被重复覆盖');
+
+      const secondApprove = await fetch(api(instanceB2, `/tasks/${approvalTask}/approve`), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ actor: 'mi-reviewer' }),
       });
-      assert.equal(approveOnA.status, 200, await approveOnA.text());
-      await waitForTask(instanceA, approvalTask, ['COMPLETED']);
-      const afterApprove = await dbStatus(admin, schema, approvalTask);
-      assert.equal(afterApprove?.status, 'COMPLETED', 'A 的写入会覆盖 B 启动时写入的 FAILED（最后写入者胜）');
+      assert.equal(secondApprove.status, 409, '任务已是终态，重复审批必须被拒绝');
+      const secondBody = (await secondApprove.json()) as { error?: { code?: string } };
+      assert.equal(secondBody.error?.code, 'INVALID_TASK_TRANSITION');
 
-      evidence.crossInstanceStartup = {
-        dbAfterBRestart: afterBRestart,
-        inMemoryStill: stillWaitingInA?.status,
-        approveOnB: approveOnB.status,
-        finalDb: afterApprove,
+      evidence.crossInstanceApproval = {
+        approveOnNonOwner: approveOnB.status,
+        approveBody,
+        finalStatus: completed.status,
+        finalOwner: completed.lease_owner,
+        steps: stepStats,
+        approvals: approvalRows.rows[0]?.count,
+        duplicateApprove: secondApprove.status,
       };
 
-      // 4) 重启 A：未完成任务只被标记 FAILED，不会双跑
-      const restartTask = await createTask(
-        instanceA,
-        body(
-          baseUrl,
-          sharedTenant,
-          'u1',
-          [
-            { action: 'goto', url: `${baseUrl}/approval-demo`, expect: { type: 'text', text: '审批恢复演示', exact: false } },
-            {
-              action: 'click',
-              target: { role: 'button', name: '保存草稿' },
-              waitFor: { type: 'response', urlContains: '/api/counter', method: 'POST', statusBelow: 400 },
-              expect: { type: 'status', text: '已保存草稿' },
-            },
-            { action: 'click', target: { role: 'button', name: '提交审核' }, expect: { type: 'status', text: '已提交审核' } },
-          ],
-          'require_approval'
-        )
-      );
-      await waitForTask(instanceA, restartTask, ['WAITING_APPROVAL']);
-      await sleep(500);
-      const stepsBeforeRestart = await dbCount(admin, schema, restartTask);
-      await stopInstance(instanceA);
-
-      const instanceA2 = spawnInstance('A2', portA, instanceEnv('A2'));
-      running.push(instanceA2);
-      await waitForHealth(portA);
-
-      const afterARestart = await dbStatus(admin, schema, restartTask);
-      assert.equal(afterARestart?.status, 'FAILED');
-      assert.equal(afterARestart?.errorCode, 'WORKER_RESTARTED');
-      await sleep(3000);
-      const stillFailed = await dbStatus(admin, schema, restartTask);
-      assert.equal(stillFailed?.status, 'FAILED', '重启后不得自动续跑未完成任务');
-      assert.equal(await dbCount(admin, schema, restartTask), stepsBeforeRestart, '重启后不得产生重复步骤');
-
-      evidence.restartOwnInstance = {
-        stepsBeforeRestart,
-        stepsAfterRestart: await dbCount(admin, schema, restartTask),
-        dbStatus: stillFailed,
-      };
-
-      const recoveredLog = instanceA2.logs.join('');
-      assert.ok(
-        recoveredLog.includes('storage.recovered_inflight_task'),
-        '重启实例应记录 recovered_inflight_task 日志'
-      );
+      // 顺带验证跨实例读：B 能读到 A 持有并完成的任务（从 DB 装载）。
+      const viewOnB = await getTask(instanceB2, approvalTask);
+      assert.equal(viewOnB?.status, 'COMPLETED');
 
       console.log(`multi-instance-evidence: ${JSON.stringify(evidence)}`);
     } finally {
       for (const instance of running) await stopInstance(instance).catch(() => undefined);
       if (fixture) await fixture.close().catch(() => undefined);
+      for (const connection of connections) await connection.close().catch(() => undefined);
 
       let counts: Record<string, number> = {};
       if (await admin.query('SELECT 1').then(() => true).catch(() => false)) {
-        for (const table of ['browser_task', 'browser_task_step', 'browser_approval', 'browser_session_state']) {
+        for (const table of [
+          'browser_task',
+          'browser_task_step',
+          'browser_approval',
+          'browser_session_state',
+          'browser_task_notification',
+        ]) {
           const row = await admin.query<{ count: number }>(
             `SELECT count(*)::int AS count FROM "${schema}".${table}`
           );

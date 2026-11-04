@@ -22,14 +22,14 @@ export function createApiApp(deps: ApiDeps): FastifyInstance {
     bodyLimit: 1024 * 1024,
   });
 
-  app.get('/healthz', async () => ({ ok: true }));
+  app.get('/healthz', async () => ({ ok: true, ownerId: deps.service.instanceId }));
 
   app.get('/api/v1/browser/tools', async () => ({ tools: listTools() }));
 
   app.get('/api/v1/browser/workflows', async () => ({ workflows: deps.workflows.list() }));
 
   app.post('/api/v1/browser/tasks', async (request, reply) => {
-    const task = deps.service.create(request.body);
+    const task = await deps.service.create(request.body);
     await deps.service.flush();
     return reply.status(201).send({
       taskId: task.taskId,
@@ -42,34 +42,37 @@ export function createApiApp(deps: ApiDeps): FastifyInstance {
   app.get('/api/v1/browser/tasks/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
     await deps.service.flush();
-    return reply.send(deps.service.view(id));
+    return reply.send(await deps.service.viewAsync(id));
   });
 
   app.get('/api/v1/browser/tasks/:id/steps', async (request, reply) => {
     const { id } = request.params as { id: string };
     await deps.service.flush();
-    return reply.send(deps.service.steps(id));
+    return reply.send(await deps.service.stepsAsync(id));
   });
 
   app.post('/api/v1/browser/tasks/:id/approve', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const task = deps.service.approve(id, request.body);
+    const result = await deps.service.approve(id, request.body);
     await deps.service.flush();
-    return reply.send({ taskId: task.taskId, status: task.status });
+    if ('approval' in result) return reply.status(202).send(result);
+    return reply.send({ taskId: result.taskId, status: result.status });
   });
 
   app.post('/api/v1/browser/tasks/:id/reject', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const task = deps.service.reject(id, request.body);
+    const result = await deps.service.reject(id, request.body);
     await deps.service.flush();
-    return reply.send({ taskId: task.taskId, status: task.status });
+    if ('approval' in result) return reply.status(202).send(result);
+    return reply.send({ taskId: result.taskId, status: result.status });
   });
 
   app.post('/api/v1/browser/tasks/:id/cancel', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const task = deps.service.cancel(id);
+    const result = await deps.service.cancel(id);
     await deps.service.flush();
-    return reply.send({ taskId: task.taskId, status: task.status });
+    if ('approval' in result) return reply.status(202).send(result);
+    return reply.send({ taskId: result.taskId, status: result.status });
   });
 
   app.setErrorHandler((rawError, request, reply) => {

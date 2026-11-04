@@ -20,6 +20,12 @@ export interface ServiceConfig {
   browserChannel: BrowserChannel;
   headless: boolean;
   workerConcurrency: number;
+  /** 多实例租约时长（毫秒）；到期后其他实例可接管。 */
+  taskLeaseMs: number;
+  /** 心跳间隔（毫秒），必须小于 taskLeaseMs。 */
+  taskHeartbeatMs: number;
+  /** dispatcher 轮询间隔（毫秒）：认领、过期回收、审批唤醒。 */
+  taskPollMs: number;
   actionTimeoutMs: number;
   expectTimeoutMs: number;
   webUrl: string;
@@ -146,6 +152,13 @@ export function loadServiceConfig(overrides: ConfigOverrides = {}): ServiceConfi
       2,
       'BROWSER_WORKER_CONCURRENCY'
     ),
+    taskLeaseMs: numberFrom(envFirst('BROWSER_TASK_LEASE_MS'), 60000, 'BROWSER_TASK_LEASE_MS'),
+    taskHeartbeatMs: numberFrom(
+      envFirst('BROWSER_TASK_HEARTBEAT_MS'),
+      15000,
+      'BROWSER_TASK_HEARTBEAT_MS'
+    ),
+    taskPollMs: numberFrom(envFirst('BROWSER_TASK_POLL_MS'), 1000, 'BROWSER_TASK_POLL_MS'),
     actionTimeoutMs: numberFrom(
       envFirst('BROWSER_ACTION_TIMEOUT_MS', 'SPIKE_ACTION_TIMEOUT_MS'),
       30000,
@@ -188,4 +201,14 @@ export function loadServiceConfig(overrides: ConfigOverrides = {}): ServiceConfi
   };
 
   return { ...defaults, ...overrides };
+}
+
+/** 心跳必须明显快于租约到期，否则存活实例会被误回收。 */
+export function assertLeaseConfig(config: ServiceConfig): void {
+  if (config.taskHeartbeatMs >= config.taskLeaseMs) {
+    throw new InvalidInputError(
+      `BROWSER_TASK_HEARTBEAT_MS（${config.taskHeartbeatMs}）必须小于 BROWSER_TASK_LEASE_MS（${config.taskLeaseMs}）`,
+      { heartbeatMs: config.taskHeartbeatMs, leaseMs: config.taskLeaseMs }
+    );
+  }
 }

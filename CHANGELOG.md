@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.3.0 — 2026-11-04
+
+多实例租约架构落地：DB 级原子认领、心跳续租、只回收过期租约的启动恢复、守卫写回与
+跨实例审批唤醒。核心修复是**不再因为别的进程重启而误杀存活任务**。
+
+### Added
+
+- `browser_task` 新增 `lease_owner / lease_expires_at / heartbeat_at / version`，并新增
+  `browser_task_notification`（跨实例审批 / 驳回 / 取消唤醒，同任务同类型仅一条未消费）。
+- `PostgresTaskRepository` 新增 `claimNext`（`FOR UPDATE SKIP LOCKED` + 条件 `UPDATE … RETURNING`）、
+  `heartbeat`、`releaseLease`、`recoverExpiredLeases`、`getTask`、`saveLeased`、`requestWake`、
+  `consumeWakes`。
+- 配置 `BROWSER_TASK_LEASE_MS`（默认 60000）、`BROWSER_TASK_HEARTBEAT_MS`（默认 15000）、
+  `BROWSER_TASK_POLL_MS`（默认 1000）；启动时校验心跳必须小于租约。
+- `/healthz` 返回实例 `ownerId`，与数据库 `lease_owner` 可直接对照。
+
+### Changed
+
+- 启动恢复：Postgres 驱动只回收**租约已过期**的任务；过期 `RUNNING` → `PENDING`，
+  过期 `WAITING_APPROVAL` → `FAILED(WORKER_RESTARTED)`。存活任务保持原状。
+- 写回：本实例持有的任务使用 `WHERE lease_owner=$1 AND lease_expires_at > now()` 守卫写回，
+  0 行抛 `LEASE_LOST` 并丢弃结果；`ResilientTaskRepository` 不再把租约丢失回落文件。
+- 执行：Postgres 驱动由 dispatcher 轮询认领（不再「谁创建谁执行」），执行期间心跳续租；
+  心跳 0 行立即停止执行并关闭会话。
+- 审批：非持有实例返回 **202** `{ approval: 'queued', owner }` 并写入通知表；持有者轮询消费后
+  在本地迁移 `RUNNING` 并续跑。单实例 / 文件驱动行为不变。
+- CI 长跑从 100 轮缩短为 30 轮（控制时长），用例与断言不改；README / Release 如实注明。
+
+### Verified
+
+- 6 条针对性测试全部真跑（一次性 Postgres + 真实 Chromium）：重启不误杀 WAITING（版本号不变）、
+  并发认领恰好一个成功、过期接管 + 原实例写回被拒、心跳跨租约周期不被抢、跨实例 approve
+  唯一终态、30 轮长跑 0 失败 / 1 ref。
+
+### Known limitations
+
+- 过期 `RUNNING` 被接管后从头重跑（至少一次，非幂等）；不会从断点续跑。
+- 跨实例审批依赖持有者轮询；持有者崩溃时请求排队至租约过期后任务失败。
+- 未覆盖小时级长跑与真实商品页长跑。
+
 ## 0.2.4 — 2026-11-04
 
 长跑稳定性与多实例归属的真实执行结果（一条通过、一条如实判定不支持）。

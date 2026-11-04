@@ -1,3 +1,4 @@
+import { LeaseLostError } from '../core/errors.js';
 import type { Logger } from '../observability/logger.js';
 import {
   FileSessionStateRepository,
@@ -10,11 +11,13 @@ import {
   type PostgresConnection,
 } from './postgres-repository.js';
 import type {
+  NoticeKind,
   Persistence,
   SessionStateKey,
   SessionStateRepository,
   StorageStateInput,
   StorageDriver,
+  TaskNotice,
   TaskRepository,
 } from './types.js';
 import type { TaskRecord } from '../tasks/task-types.js';
@@ -25,7 +28,7 @@ export interface PersistenceOptions {
   persistenceDir: string;
 }
 
-/** Postgres 写失败时补写文件；读时优先 Postgres，缺失再回落文件。 */
+/** Postgres 写失败时补写文件；读时优先 Postgres，缺失再回落文件。租约丢失绝不回落。 */
 class ResilientTaskRepository implements TaskRepository {
   constructor(
     private readonly primary: TaskRepository,
@@ -35,6 +38,10 @@ class ResilientTaskRepository implements TaskRepository {
 
   get driver(): StorageDriver {
     return this.primary.driver;
+  }
+
+  get supportsLeases(): boolean {
+    return Boolean(this.primary.supportsLeases);
   }
 
   init(): Promise<void> {
@@ -56,10 +63,48 @@ class ResilientTaskRepository implements TaskRepository {
     return [...merged.values()];
   }
 
+  getTask(taskId: string): Promise<TaskRecord | undefined> {
+    return this.primary.getTask?.(taskId) ?? Promise.resolve(undefined);
+  }
+
+  claimNext(ownerId: string, leaseMs: number): Promise<TaskRecord | undefined> {
+    return this.primary.claimNext?.(ownerId, leaseMs) ?? Promise.resolve(undefined);
+  }
+
+  saveLeased(task: TaskRecord, ownerId: string, leaseMs: number): Promise<void> {
+    return this.primary.saveLeased?.(task, ownerId, leaseMs) ?? this.primary.save(task);
+  }
+
+  heartbeat(taskId: string, ownerId: string, leaseMs: number): Promise<boolean> {
+    return this.primary.heartbeat?.(taskId, ownerId, leaseMs) ?? Promise.resolve(false);
+  }
+
+  releaseLease(taskId: string, ownerId: string): Promise<void> {
+    return this.primary.releaseLease?.(taskId, ownerId) ?? Promise.resolve();
+  }
+
+  recoverExpiredLeases(): Promise<number> {
+    return this.primary.recoverExpiredLeases?.() ?? Promise.resolve(0);
+  }
+
+  requestWake(
+    taskId: string,
+    kind: NoticeKind,
+    payload: Record<string, unknown>
+  ): Promise<void> {
+    return this.primary.requestWake?.(taskId, kind, payload) ?? Promise.resolve();
+  }
+
+  consumeWakes(ownerId: string): Promise<TaskNotice[]> {
+    return this.primary.consumeWakes?.(ownerId) ?? Promise.resolve([]);
+  }
+
   async save(task: TaskRecord): Promise<void> {
     try {
       await this.primary.save(task);
     } catch (error) {
+      // 租约丢失是控制流信号，不是存储故障：回落到文件会掩盖「写入被拒」的事实。
+      if (error instanceof LeaseLostError) throw error;
       this.logger.warn('storage.postgres_write_failed_fallback_file', {
         taskId: task.taskId,
         message: (error as Error).message,

@@ -58,6 +58,18 @@ export class InvalidTaskTransitionError extends AppError {
   }
 }
 
+/** 守卫写回命中 0 行：租约已被别的实例接管，本实例不得覆盖其结果。 */
+export class LeaseLostError extends AppError {
+  constructor(taskId: string, ownerId?: string) {
+    super(
+      `任务 ${taskId} 的租约已失效${ownerId ? `（持有者 ${ownerId}）` : ''}，本次写回被拒绝`,
+      'LEASE_LOST',
+      409,
+      { taskId, ...(ownerId ? { ownerId } : {}) }
+    );
+  }
+}
+
 export class ElementNotFoundError extends AppError {
   constructor(message: string, details: Record<string, unknown> = {}) {
     super(message, 'ELEMENT_NOT_FOUND', 422, details);

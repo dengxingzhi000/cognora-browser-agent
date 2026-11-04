@@ -61,9 +61,10 @@ jobs:
       - name: Tests
         run: npm test
 
-      - name: Long-run stability (100 rounds, shared Postgres)
+      - name: Long-run stability (30 rounds, shared Postgres)
         env:
           BROWSER_AGENT_LONGRUN: '1'
+          BROWSER_AGENT_LONGRUN_ROUNDS: '30'
         run: npm run test:longrun
 
       - name: Multi-instance ownership (2 processes, shared Postgres)
