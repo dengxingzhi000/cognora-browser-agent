@@ -1,6 +1,6 @@
 <div align="center">
 
-# browser-agent-spike
+# cognora-browser-agent
 
 ### 面向 Agent 的结构化浏览器执行服务
 
@@ -12,7 +12,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-7.0.2-3178C6?logo=typescript&logoColor=white&style=flat-square)](https://www.typescriptlang.org/)
 [![Playwright](https://img.shields.io/badge/Playwright-Chromium-2EAD33?logo=playwright&logoColor=white&style=flat-square)](https://playwright.dev/)
 [![Persistence](https://img.shields.io/badge/persistence-postgres%20%7C%20file%20%7C%20memory-4169E1?style=flat-square)](./scripts/db/schema.sql)
-[![Version](https://img.shields.io/badge/version-0.2.4-blue?style=flat-square)](https://github.com/dengxingzhi000/cognora-browser-agent/releases/tag/v0.2.4)
+[![Version](https://img.shields.io/badge/version-0.3.0-blue?style=flat-square)](https://github.com/dengxingzhi000/cognora-browser-agent/releases/tag/v0.3.0)
 
 [快速开始](#快速开始) · [能力概览](#能力概览) · [技术栈](#技术栈) · [架构](#架构) · [覆盖范围](#覆盖范围) · [API](#api-契约) · [持久化](#持久化) · [安全](#安全边界) · [测试](#测试与-ci) · [限制](#已知限制)
 
@@ -217,7 +217,7 @@ npm run spike:real-product   # 只跑真实登录 + 商品页探针
 ### 目录结构
 
 ```text
-browser-agent-spike/
+cognora-browser-agent/
 ├── apps/
 │   ├── api/                    # Fastify server + 组合启动
 │   └── worker/                 # 进程内队列 + 任务执行
@@ -470,9 +470,9 @@ npm run typecheck
 
 ```text
 tests 35
-pass 32
+pass 31
 fail 0
-skipped 3   # 长跑 / 多实例（未设置 DSN 或未开启开关）+ 1 条需外部条件用例
+skipped 4   # 长跑 / 多实例（未设置 DSN 或未开启开关）+ 1 条需外部条件用例
 ```
 
 `npm run typecheck`（`tsc --noEmit`）0 错误。CI 每次启动一次性 Postgres 17 service 并先执行
